@@ -71,7 +71,7 @@ class FrankaKitchen(gym.Wrapper):  # type: ignore
             img_observation = img_observation / 255.0
             observation = {"image": img_observation}
             
-            info = {}
+            # info = {}
 
         elif self.obs_type == "image_joints":
             img_observation = info["images"]
@@ -82,7 +82,7 @@ class FrankaKitchen(gym.Wrapper):  # type: ignore
             joint_observation = np.array(joint_observation, dtype=np.float32)
             observation = {"image": img_observation, "vector": joint_observation}
 
-            info = {}
+            # info = {}
         else:
             pass
 
