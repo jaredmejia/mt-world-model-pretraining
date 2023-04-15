@@ -3,3 +3,4 @@ forward_dreamer/example/dreamer/__pycache__/
 forward_dreamer/example/dreamer/dreamer/
 forward_dreamer/example/dreamer/outputs/
 component_tests/*/*
+__pycache__/

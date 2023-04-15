@@ -1,9 +1,10 @@
 import collections
-from typing import Dataset, Optional, Tuple
+from typing import Optional, Tuple
 
 import d4rl
 import gym
 import numpy as np
+import torch
 from tqdm import tqdm
 
 import wrappers
@@ -11,33 +12,6 @@ import wrappers
 Batch = collections.namedtuple(
     'Batch',
     ['observations', 'actions', 'rewards', 'masks', 'next_observations'])
-
-
-def make_env_and_dataset(env_name: str,
-                         seed: int, 
-                         observation_type: str = "default") -> Tuple[gym.Env, Dataset]:
-
-    if 'kitchen' in env_name:
-        render_imgs = 'image' in observation_type
-        env = gym.make(env_name, render_imgs=render_imgs)
-        env = wrappers.FrankaKitchen(env, obs_type=observation_type)
-    else:
-        env = gym.make(env_name)
-
-    env = wrappers.EpisodeMonitor(env)
-    env = wrappers.SinglePrecision(env)
-
-    env.seed(seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
-
-    if 'kitchen' in env_name:
-        dataset = KitchenDataset(env, observation_type=observation_type)
-    else:
-        dataset = D4RLDataset(env)
-
-    return env, dataset
-
 
 
 def split_into_trajectories(observations, actions, rewards, masks, dones_float,
@@ -138,10 +112,8 @@ def qlearning_kitchen_dataset(env, terminate_on_end=False, observation_type="def
             new_obs = dataset["observations"][i+1].astype(np.float32)
         elif observation_type == "image_joints":
             image = dataset["images"][i]
-            image = image / 255.0
 
             next_image = dataset["images"][i+1]
-            next_image = next_image / 255.0
 
             joint = dataset["observations"][i][:9].astype(np.float32)
             next_joint = dataset["observations"][i+1][:9].astype(np.float32)
@@ -379,3 +351,28 @@ class ReplayBuffer(Dataset):
 
         self.insert_index = (self.insert_index + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
+
+def make_env_and_dataset(env_name: str,
+                         seed: int, 
+                         observation_type: str = "default") -> Tuple[gym.Env, Dataset]:
+
+    if 'kitchen' in env_name:
+        render_imgs = 'image' in observation_type
+        env = gym.make(env_name, render_imgs=render_imgs)
+        env = wrappers.FrankaKitchen(env, obs_type=observation_type)
+    else:
+        env = gym.make(env_name)
+
+    env = wrappers.EpisodeMonitor(env)
+    env = wrappers.SinglePrecision(env)
+
+    env.seed(seed)
+    env.action_space.seed(seed)
+    env.observation_space.seed(seed)
+
+    if 'kitchen' in env_name:
+        dataset = KitchenDataset(env, observation_type=observation_type)
+    else:
+        dataset = D4RLDataset(env)
+
+    return env, dataset
