@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.cuda
 import tqdm
-from tensordict.nn import TensorDictModule
+from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
 
 from torch import nn, optim
@@ -25,7 +25,8 @@ from torchrl.objectives.iql import IQLLoss
 from torchrl.record.loggers import generate_exp_name, get_logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-import datasets
+from datasets import KitchenExperienceReplay, KitchenFilterState
+from modules import PixelVecNet
 
 
 def env_maker(env_name, frame_skip=1, device="cpu", from_pixels=False):
@@ -35,12 +36,175 @@ def env_maker(env_name, frame_skip=1, device="cpu", from_pixels=False):
         custom_env = gym.make(env_name, render_imgs=from_pixels)
         custom_env = GymWrapper(custom_env, frame_skip=frame_skip, from_pixels=from_pixels )
         if from_pixels:
-            custom_env = TransformedEnv(custom_env, Compose(ToTensorImage(), CenterCrop(96)))
+            pixel_keys =["pixels", ("next", "pixels")]
+            state_keys = ["observation", ("next", "observation")]
+            env_transforms = Compose(
+                ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
+                KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
+            )
+            custom_env = TransformedEnv(custom_env, env_transforms)
         return custom_env
     
     return GymEnv(
         env_name, device=device, frame_skip=frame_skip, from_pixels=from_pixels
     )
+
+
+def get_actor(cfg, test_env, num_actions, in_keys):
+    # Define Actor Network
+    action_spec = test_env.action_spec
+    mlp_kwargs = {
+        "num_cells": [256, 256],
+        "out_features": 2 * num_actions,
+        "activation_class": nn.ReLU,
+        "dropout": cfg.actor_dropout,
+    }
+    if "pixels" in in_keys:
+        cnn_kwargs = {
+                "bias_last_layer": True,
+                "depth": None,
+                "num_cells": [32, 64, 64],
+                "kernel_sizes": [8, 4, 3],
+                "strides": [4, 2, 1],
+                "aggregator_class": nn.GroupNorm,
+                "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
+        }
+        learned_spatial_embedding_kwargs = {
+            "height": 8,
+            "width": 8,
+            "channels": 64,
+            "num_features": 8,
+        }
+
+        actor_net = PixelVecNet(
+            mlp_kwargs=mlp_kwargs,
+            cnn_kwargs=cnn_kwargs,
+            learned_spatial_embedding_kwargs=learned_spatial_embedding_kwargs,
+        )
+    else:
+        actor_net = MLP(**mlp_kwargs)
+
+    dist_class = TanhNormal
+    dist_kwargs = {
+        "min": action_spec.space.minimum[-1],
+        "max": action_spec.space.maximum[-1],
+        "tanh_loc": cfg.tanh_loc,
+    }
+
+    actor_extractor = NormalParamExtractor(
+        scale_mapping=f"biased_softplus_{cfg.default_policy_scale}",
+        scale_lb=cfg.scale_lb,
+    )
+
+    td_actor_net = TensorDictModule(
+        actor_net,
+        in_keys=in_keys,
+        out_keys=['loc-scale']
+    )
+    td_actor_extractor = TensorDictModule(
+        actor_extractor,
+        in_keys=['loc-scale'],
+        out_keys=['loc', 'scale']
+    )
+    actor_module = TensorDictSequential(td_actor_net, td_actor_extractor)
+
+    actor = ProbabilisticActor(
+        spec=action_spec,
+        in_keys=["loc", "scale"],
+        module=actor_module,
+        distribution_class=dist_class,
+        distribution_kwargs=dist_kwargs,
+        default_interaction_mode="random",
+        return_log_prob=False,
+    )
+    return actor
+
+
+def get_critic(in_keys):
+    # Define Critic Network
+    mlp_kwargs = {
+        "num_cells": [256, 256],
+        "out_features": 1,
+        "activation_class": nn.ReLU,
+    }
+
+    if "pixels" in in_keys:
+        cnn_kwargs = {
+                "bias_last_layer": True,
+                "depth": None,
+                "num_cells": [32, 64, 64],
+                "kernel_sizes": [8, 4, 3],
+                "strides": [4, 2, 1],
+                "aggregator_class": nn.GroupNorm,
+                "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
+        }
+        learned_spatial_embedding_kwargs = {
+            "height": 8,
+            "width": 8,
+            "channels": 64,
+            "num_features": 8,
+        }
+
+        qvalue_net = PixelVecNet(
+            mlp_kwargs=mlp_kwargs,
+            cnn_kwargs=cnn_kwargs,
+            learned_spatial_embedding_kwargs=learned_spatial_embedding_kwargs,
+            include_action=True
+        )
+    
+    else:
+        qvalue_net = MLP(
+            **mlp_kwargs,
+        )
+
+    qvalue = ValueOperator(
+        in_keys=["action"] + in_keys,
+        module=qvalue_net,
+    )
+
+    return qvalue
+
+
+def get_value(in_keys):
+    # Define Value Network
+    mlp_kwargs = {
+        "num_cells": [256, 256],
+        "out_features": 1,
+        "activation_class": nn.ReLU,
+    }
+
+    if "pixels" in in_keys:
+        cnn_kwargs = {
+                "bias_last_layer": True,
+                "depth": None,
+                "num_cells": [32, 64, 64],
+                "kernel_sizes": [8, 4, 3],
+                "strides": [4, 2, 1],
+                "aggregator_class": nn.GroupNorm,
+                "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
+        }
+        learned_spatial_embedding_kwargs = {
+            "height": 8,
+            "width": 8,
+            "channels": 64,
+            "num_features": 8,
+        }
+
+        value_net = PixelVecNet(
+            mlp_kwargs=mlp_kwargs,
+            cnn_kwargs=cnn_kwargs,
+            learned_spatial_embedding_kwargs=learned_spatial_embedding_kwargs,
+        )
+    
+    else:
+        value_net = MLP(**mlp_kwargs)
+
+    value = ValueOperator(
+        in_keys=in_keys,
+        module=value_net,
+    )
+
+    return value
 
 
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
@@ -54,7 +218,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
         else torch.device("cpu")
     )
 
-    exp_name = generate_exp_name("Online_IQL", cfg.exp_name)
+    exp_name = generate_exp_name("Offline_IQL", cfg.exp_name)
     logger = get_logger(
         logger_type=cfg.logger,
         logger_name="iql_logging",
@@ -80,78 +244,20 @@ def main(cfg: "DictConfig"):  # noqa: F821
     test_env = env_factory(num_workers=5)
     num_actions = test_env.action_spec.shape[-1]
 
+    if cfg.observation_type == "image_joints":
+        assert cfg.from_pixels, "observation_type 'image_joints' requires from_pixels is True"
+        in_keys = ["observation", "pixels"]
+    else:
+        in_keys = ["observation"]
+
     # Create Agent
-    # Define Actor Network
-    in_keys = ["observation"]
-    action_spec = test_env.action_spec
-    actor_net_kwargs = {
-        "num_cells": [256, 256],
-        "out_features": 2 * num_actions,
-        "activation_class": nn.ReLU,
-        "dropout": cfg.actor_dropout,
-    }
+    actor = get_actor(cfg, test_env, num_actions, in_keys)
 
-    actor_net = MLP(**actor_net_kwargs)
+    # Create Critic
+    qvalue = get_critic(in_keys)
 
-    dist_class = TanhNormal
-    dist_kwargs = {
-        "min": action_spec.space.minimum[-1],
-        "max": action_spec.space.maximum[-1],
-        "tanh_loc": cfg.tanh_loc,
-    }
-
-    actor_extractor = NormalParamExtractor(
-        scale_mapping=f"biased_softplus_{cfg.default_policy_scale}",
-        scale_lb=cfg.scale_lb,
-    )
-
-    actor_net = nn.Sequential(actor_net, actor_extractor)
-    in_keys_actor = in_keys
-    actor_module = TensorDictModule(
-        actor_net,
-        in_keys=in_keys_actor,
-        out_keys=[
-            "loc",
-            "scale",
-        ],
-    )
-    actor = ProbabilisticActor(
-        spec=action_spec,
-        in_keys=["loc", "scale"],
-        module=actor_module,
-        distribution_class=dist_class,
-        distribution_kwargs=dist_kwargs,
-        default_interaction_mode="random",
-        return_log_prob=False,
-    )
-
-    # Define Critic Network
-    qvalue_net_kwargs = {
-        "num_cells": [256, 256],
-        "out_features": 1,
-        "activation_class": nn.ReLU,
-    }
-
-    qvalue_net = MLP(
-        **qvalue_net_kwargs,
-    )
-
-    qvalue = ValueOperator(
-        in_keys=["action"] + in_keys,
-        module=qvalue_net,
-    )
-
-    # Define Value Network
-    value_net_kwargs = {
-        "num_cells": [256, 256],
-        "out_features": 1,
-        "activation_class": nn.ReLU,
-    }
-    value_net = MLP(**value_net_kwargs)
-    value = ValueOperator(
-        in_keys=in_keys,
-        module=value_net,
-    )
+    # Create Value
+    value = get_value(in_keys)
 
     model = nn.ModuleList([actor, qvalue, value]).to(device)
 
@@ -183,7 +289,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
     target_net_updater = SoftUpdate(loss_module, cfg.target_update_polyak)
 
     # Make Replay Buffer
-    replay_buffer = datasets.KitchenExperienceReplay('kitchen-complete-v0', observation_type=cfg.observation_type)
+    replay_buffer = KitchenExperienceReplay('kitchen-complete-v0', observation_type=cfg.observation_type)
 
     # Optimizers
     params = list(loss_module.parameters())

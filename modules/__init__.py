@@ -1,1 +1,1 @@
-from encoders import LearnedSpatialEmbedding, PixelVecNet
+from .encoders import LearnedSpatialEmbedding, PixelVecNet

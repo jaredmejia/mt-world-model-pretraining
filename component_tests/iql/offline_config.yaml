@@ -1,7 +1,7 @@
 env_name: kitchen-complete-v0
 env_library: gym
 exp_name: "iql_kitchen-complete"
-observation_type: "default"
+observation_type: "image_joints"
 seed: 42
 async_collection: 1
 record_video: 0
@@ -23,7 +23,7 @@ tanh_loc: False
 default_policy_scale: 1.0
 scale_lb: 0.1
 activation: elu
-from_pixels: 0
+from_pixels: 1
 #collector_devices: [cuda:1,cuda:1,cuda:1,cuda:1]
 collector_devices: [cpu]
 env_per_collector: 10

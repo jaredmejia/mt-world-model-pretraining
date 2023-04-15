@@ -14,6 +14,7 @@ from torchrl.envs import CenterCrop, Compose, ToTensorImage, TransformedEnv
 from torchrl.envs.libs.gym import GymWrapper
 
 from .dataset_utils import qlearning_kitchen_dataset
+from .transforms import KitchenFilterState
 
 
 class KitchenExperienceReplay(TensorDictReplayBuffer):
@@ -57,7 +58,12 @@ class KitchenExperienceReplay(TensorDictReplayBuffer):
     def _get_dataset_direct(self, env_name, observation_type):
         if 'image' in observation_type:
             from_pixels = True
-            env_transforms = Compose(ToTensorImage(), CenterCrop(96))
+            pixel_keys =["pixels", ("next", "pixels")]
+            state_keys = ["observations", ("next", "observations")]
+            env_transforms = Compose(
+                ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
+                KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
+            )
         else:
             from_pixels = False
             env_transforms = None

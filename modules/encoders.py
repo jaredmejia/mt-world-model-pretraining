@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -45,6 +45,7 @@ class PixelVecNet(nn.Module):
             mlp_kwargs: Optional[dict] = None,
             cnn_kwargs: Optional[dict] = None,
             learned_spatial_embedding_kwargs: Optional[dict] = None,
+            include_action: bool = False,
     ):
         super().__init__()
         
@@ -75,9 +76,22 @@ class PixelVecNet(nn.Module):
         else:
             self.learned_spatial_embedding = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        pixel_inputs = x['pixels']
-        vector_inputs = x['observation']
+        self.include_action = include_action
+
+    def forward(self, *inputs: Tuple[torch.Tensor]) -> torch.Tensor:
+        if self.include_action:
+            return self._forward_with_action(*inputs)
+        else:
+            return self._forward(*inputs)
+
+    def _forward_with_action(self, action_inputs: torch.Tensor, vector_inputs: torch.Tensor, pixel_inputs: torch.Tensor) -> torch.Tensor:
+        vector_inputs = torch.cat((vector_inputs, action_inputs), dim=1)
+        return self._forward(vector_inputs, pixel_inputs)
+    
+    def _forward(self, vector_inputs: torch.Tensor, pixel_inputs: torch.Tensor) -> torch.Tensor:
+        assert len(pixel_inputs.shape) == 4, "Pixel inputs must be of shape (bs, channels, height, width)"
+        assert len(vector_inputs.shape) == 2, "Vector inputs must be of shape (bs, vector_dim)"
+        assert pixel_inputs.shape[0] == vector_inputs.shape[0], "Batch size of pixel and vector inputs must be equal"
 
         bs = pixel_inputs.shape[0]
 
