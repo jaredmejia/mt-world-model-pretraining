@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
-
 import hydra
 import os
 import sys
@@ -23,7 +17,7 @@ from torchrl.data.replay_buffers.storages import LazyMemmapStorage
 from torchrl.envs import CenterCrop, Compose, EnvCreator, ParallelEnv, ToTensorImage, TransformedEnv
 from torchrl.envs.libs.gym import GymEnv, GymWrapper
 from torchrl.envs.utils import set_exploration_mode
-from torchrl.modules import MLP, ProbabilisticActor, ValueOperator
+from torchrl.modules import ConvNet, MLP, ProbabilisticActor, ValueOperator
 from torchrl.modules.distributions import TanhNormal
 
 from torchrl.objectives import SoftUpdate
@@ -47,41 +41,6 @@ def env_maker(env_name, frame_skip=1, device="cpu", from_pixels=False):
     return GymEnv(
         env_name, device=device, frame_skip=frame_skip, from_pixels=from_pixels
     )
-
-
-def make_replay_buffer(
-    batch_size,
-    prb=False,
-    buffer_size=1000000,
-    buffer_scratch_dir="/tmp/",
-    device="cpu",
-    prefetch=3,
-):
-    if prb:
-        replay_buffer = TensorDictPrioritizedReplayBuffer(
-            alpha=0.7,
-            beta=0.5,
-            pin_memory=False,
-            prefetch=prefetch,
-            storage=LazyMemmapStorage(
-                buffer_size,
-                scratch_dir=buffer_scratch_dir,
-                device=device,
-            ),
-            batch_size=batch_size,
-        )
-    else:
-        replay_buffer = TensorDictReplayBuffer(
-            pin_memory=False,
-            prefetch=prefetch,
-            storage=LazyMemmapStorage(
-                buffer_size,
-                scratch_dir=buffer_scratch_dir,
-                device=device,
-            ),
-            batch_size=batch_size,
-        )
-    return replay_buffer
 
 
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
