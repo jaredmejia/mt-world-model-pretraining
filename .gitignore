@@ -1,6 +1,7 @@
 notebooks/
-forward_dreamer/example/dreamer/__pycache__/
-forward_dreamer/example/dreamer/dreamer/
-forward_dreamer/example/dreamer/outputs/
-component_tests/*/*
+component_tests/dreamer/__pycache__/
+component_tests/dreamer/dreamer/
+component_tests/dreamer/outputs/
+component_tests/iql/iql_logging/
+component_tests/iql/outputs/
 __pycache__/

@@ -13,7 +13,7 @@ from torchrl.data.replay_buffers.writers import Writer
 from torchrl.envs import CenterCrop, Compose, ToTensorImage, TransformedEnv
 from torchrl.envs.libs.gym import GymWrapper
 
-from dataset_utils import qlearning_kitchen_dataset
+from .dataset_utils import qlearning_kitchen_dataset
 
 
 class KitchenExperienceReplay(TensorDictReplayBuffer):
@@ -100,7 +100,8 @@ class KitchenExperienceReplay(TensorDictReplayBuffer):
         if observation_type == "image_joints":
             dataset.rename_key("next_pixels", ("next", "pixels"))
         
-        dataset = env_transforms(dataset)
+        if env_transforms is not None:
+            dataset = env_transforms(dataset)
 
         # checking dtypes
         for key, spec in env.observation_spec.items(True, True):
