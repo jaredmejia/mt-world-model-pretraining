@@ -81,26 +81,17 @@ class PixelVecNet(nn.Module):
 
         bs = pixel_inputs.shape[0]
 
-        print(x.keys())
-        print(f'pixel_inputs shape: {pixel_inputs.shape}')
-        print(f'vector_inputs shape: {vector_inputs.shape}')
-
         # encode pixel inputs
         encoded_pixels = self.cnn(pixel_inputs)
-        print(f'encoded_pixels shape: {encoded_pixels.shape}')
 
         # spatial embedding
         if self.learned_spatial_embedding is not None:
             encoded_pixels = self.learned_spatial_embedding(encoded_pixels)
-            print(f'encoded_pixels post spatial embedding shape: {encoded_pixels.shape}')
         
         encoded_pixels = encoded_pixels.view(bs, -1)
-        print(f'flattened encoded_pixels shape: {encoded_pixels.shape}')
 
         # concatenate pixel and vector inputs and pass through MLP
         cat_input = torch.cat((encoded_pixels, vector_inputs), dim=1)
-        print(f'cat_input shape: {cat_input.shape}')
         outputs = self.mlp(cat_input)
-        print(f'outputs shape: {outputs.shape}')
 
         return outputs
