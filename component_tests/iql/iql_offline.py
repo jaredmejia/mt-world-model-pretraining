@@ -203,27 +203,29 @@ def get_value(in_keys):
     return value
 
 
-def get_q_val_estimate(tensordict, iql_loss_module):
+def get_q_val_estimate(tensordict, iql_loss_module, device):
     with torch.no_grad():
         td_q = tensordict.select(*iql_loss_module.qvalue_network.in_keys).detach()
+        td_q = td_q.reshape(-1).to(device)
         td_q = vmap(iql_loss_module.qvalue_network, (None, 0))(
             td_q, iql_loss_module.target_qvalue_network_params
         )
-        avg_q_val = td_q.get("state_action_value").mean()
-        max_q_val = td_q.get("state_action_value").max()
+        avg_q_val = td_q.get("state_action_value").mean().item()
+        max_q_val = td_q.get("state_action_value").max().item()
     
     return avg_q_val, max_q_val
 
 
-def get_value_estimate(tensordict, iql_loss_module):
+def get_value_estimate(tensordict, iql_loss_module, device):
     with torch.no_grad():
-        td_copy = tensordict.select(*iql_loss_module.value_network.in_keys).detach()
+        td_val = tensordict.select(*iql_loss_module.value_network.in_keys).detach()
+        td_val = td_val.reshape(-1).to(device)
         iql_loss_module.value_network(
-            td_copy,
+            td_val,
             params=iql_loss_module.value_network_params,
         )
-        avg_val = td_copy.get("state_value").mean()
-        max_val = td_copy.get("state_value").max()
+        avg_val = td_val.get("state_value").mean().item()
+        max_val = td_val.get("state_value").max().item()
     
     return avg_val, max_val
 
@@ -383,12 +385,12 @@ def main(cfg: "DictConfig"):  # noqa: F821
                 logger.log_scalar("test_reward", rewards_eval[-1][1], step=i)
 
                 # log q-value estimates
-                q_value_avg, q_value_max = get_q_val_estimate(model[1], eval_rollout)
+                q_value_avg, q_value_max = get_q_val_estimate(eval_rollout, loss_module, device)
                 logger.log_scalar("q_value_avg", q_value_avg, step=i)
                 logger.log_scalar("q_value_max", q_value_max, step=i)
 
                 # log value estimates
-                value_avg, value_max = get_value_estimate(model[2], eval_rollout)
+                value_avg, value_max = get_value_estimate(eval_rollout, loss_module, device)
                 logger.log_scalar("value_avg", value_avg, step=i)
                 logger.log_scalar("value_max", value_max, step=i)
 
