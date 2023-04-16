@@ -5,21 +5,17 @@ import sys
 import numpy as np
 import torch
 import torch.cuda
+from torch import nn, optim
 import tqdm
+
+from functorch import vmap
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
-
-from torch import nn, optim
-from torchrl.collectors import SyncDataCollector
-from torchrl.data import TensorDictPrioritizedReplayBuffer, TensorDictReplayBuffer
-
-from torchrl.data.replay_buffers.storages import LazyMemmapStorage
 from torchrl.envs import CenterCrop, Compose, EnvCreator, ParallelEnv, ToTensorImage, TransformedEnv
 from torchrl.envs.libs.gym import GymEnv, GymWrapper
 from torchrl.envs.utils import set_exploration_mode
 from torchrl.modules import ConvNet, MLP, ProbabilisticActor, ValueOperator
 from torchrl.modules.distributions import TanhNormal
-
 from torchrl.objectives import SoftUpdate
 from torchrl.objectives.iql import IQLLoss
 from torchrl.record.loggers import generate_exp_name, get_logger
@@ -207,6 +203,31 @@ def get_value(in_keys):
     return value
 
 
+def get_q_val_estimate(tensordict, iql_loss_module):
+    with torch.no_grad():
+        td_q = tensordict.select(*iql_loss_module.qvalue_network.in_keys).detach()
+        td_q = vmap(iql_loss_module.qvalue_network, (None, 0))(
+            td_q, iql_loss_module.target_qvalue_network_params
+        )
+        avg_q_val = td_q.get("state_action_value").mean()
+        max_q_val = td_q.get("state_action_value").max()
+    
+    return avg_q_val, max_q_val
+
+
+def get_value_estimate(tensordict, iql_loss_module):
+    with torch.no_grad():
+        td_copy = tensordict.select(*iql_loss_module.value_network.in_keys).detach()
+        iql_loss_module.value_network(
+            td_copy,
+            params=iql_loss_module.value_network_params,
+        )
+        avg_val = td_copy.get("state_value").mean()
+        max_val = td_copy.get("state_value").max()
+    
+    return avg_val, max_val
+
+
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
@@ -301,7 +322,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # Main loop
     target_net_updater.init_()
 
-    collected_frames = 0
+    i = 0
 
     r0 = None
     loss = None
@@ -344,7 +365,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
             }
             
         for key, value in train_log.items():
-            logger.log_scalar(key, value, step=collected_frames)
+            logger.log_scalar(key, value, step=i)
 
         if i % cfg.eval_interval == 0:
 
@@ -354,10 +375,22 @@ def main(cfg: "DictConfig"):  # noqa: F821
                     policy=model[0],
                     auto_cast_to_device=True,
                 ).clone()
+                
+                # log reward
                 eval_reward = eval_rollout["reward"].sum(-2).mean().item()
                 rewards_eval.append((i, eval_reward))
                 eval_str = f"eval cumulative reward: {rewards_eval[-1][1]: 4.4f} (init: {rewards_eval[0][1]: 4.4f})"
-                logger.log_scalar("test_reward", rewards_eval[-1][1], step=collected_frames)
+                logger.log_scalar("test_reward", rewards_eval[-1][1], step=i)
+
+                # log q-value estimates
+                q_value_avg, q_value_max = get_q_val_estimate(model[1], eval_rollout)
+                logger.log_scalar("q_value_avg", q_value_avg, step=i)
+                logger.log_scalar("q_value_max", q_value_max, step=i)
+
+                # log value estimates
+                value_avg, value_max = get_value_estimate(model[2], eval_rollout)
+                logger.log_scalar("value_avg", value_avg, step=i)
+                logger.log_scalar("value_max", value_max, step=i)
 
 
 if __name__ == "__main__":
