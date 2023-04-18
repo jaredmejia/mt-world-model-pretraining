@@ -116,12 +116,13 @@ def get_actor(cfg, test_env, num_actions, in_keys):
     return actor
 
 
-def get_critic(in_keys):
+def get_critic(critic_dropout, in_keys):
     # Define Critic Network
     mlp_kwargs = {
         "num_cells": [256, 256],
         "out_features": 1,
         "activation_class": nn.ReLU,
+        "dropout": critic_dropout,
     }
 
     if "pixels" in in_keys:
@@ -161,12 +162,13 @@ def get_critic(in_keys):
     return qvalue
 
 
-def get_value(in_keys):
+def get_value(value_dropout, in_keys):
     # Define Value Network
     mlp_kwargs = {
         "num_cells": [256, 256],
         "out_features": 1,
         "activation_class": nn.ReLU,
+        "dropout": value_dropout,
     }
 
     if "pixels" in in_keys:
@@ -277,10 +279,10 @@ def main(cfg: "DictConfig"):  # noqa: F821
     actor = get_actor(cfg, test_env, num_actions, in_keys)
 
     # Create Critic
-    qvalue = get_critic(in_keys)
+    qvalue = get_critic(cfg.critic_dropout, in_keys)
 
     # Create Value
-    value = get_value(in_keys)
+    value = get_value(cfg.value_dropout, in_keys)
 
     model = nn.ModuleList([actor, qvalue, value]).to(device)
 
@@ -385,12 +387,12 @@ def main(cfg: "DictConfig"):  # noqa: F821
                 logger.log_scalar("test_reward", rewards_eval[-1][1], step=i)
 
                 # log q-value estimates
-                q_value_avg, q_value_max = get_q_val_estimate(eval_rollout, loss_module, device)
+                q_value_avg, q_value_max = get_q_val_estimate(sampled_tensordict, loss_module, device)
                 logger.log_scalar("q_value_avg", q_value_avg, step=i)
                 logger.log_scalar("q_value_max", q_value_max, step=i)
 
                 # log value estimates
-                value_avg, value_max = get_value_estimate(eval_rollout, loss_module, device)
+                value_avg, value_max = get_value_estimate(sampled_tensordict, loss_module, device)
                 logger.log_scalar("value_avg", value_avg, step=i)
                 logger.log_scalar("value_max", value_max, step=i)
 

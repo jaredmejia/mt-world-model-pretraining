@@ -18,6 +18,8 @@ gamma: 0.99
 max_steps: 500000
 eval_interval: 1000
 actor_dropout: 0.1
+critic_dropout: 0.0
+value_dropout: 0.0
 
 tanh_loc: False
 default_policy_scale: 1.0

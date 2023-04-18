@@ -5,3 +5,5 @@ component_tests/dreamer/outputs/
 component_tests/iql/iql_logging/
 component_tests/iql/outputs/
 __pycache__/
+data_collection/train_agent/sac/sac_logging
+data_collection/train_agent/sac/outputs/
