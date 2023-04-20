@@ -92,6 +92,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
             "project": "torchrl",
             "group": f"Dreamer_{cfg.env_name}",
             "offline": cfg.offline_logging,
+            "entity": "neuropioneers"
         },
     )
     video_tag = f"Dreamer_{cfg.env_name}_policy_test" if cfg.record_video else ""
