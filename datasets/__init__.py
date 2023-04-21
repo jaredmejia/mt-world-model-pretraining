@@ -1,2 +1,2 @@
-from .offline_replay_buffers import KitchenExperienceReplay
+from .offline_replay_buffers import KitchenExperienceReplay, KitchenSubTrajectoryReplay
 from .transforms import KitchenFilterState

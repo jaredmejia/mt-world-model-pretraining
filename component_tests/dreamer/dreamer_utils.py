@@ -91,20 +91,20 @@ def make_env_transforms(
             env.append_transform(GrayScale())
         env.append_transform(FlattenObservation(0, -3, allow_positive_dim=True))
         env.append_transform(CatFrames(N=cfg.catframes, in_keys=["pixels"], dim=-3))
-        if stats is None and obs_norm_state_dict is None:
-            obs_stats = {
-                "loc": torch.zeros(()),
-                "scale": torch.ones(()),
-            }
-        elif stats is None and obs_norm_state_dict is not None:
-            obs_stats = obs_norm_state_dict
-        else:
-            obs_stats = stats
-        obs_stats["standard_normal"] = True
-        obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
-        # if obs_norm_state_dict:
-        #     obs_norm.load_state_dict(obs_norm_state_dict)
-        env.append_transform(obs_norm)
+        # if stats is None and obs_norm_state_dict is None:
+        #     obs_stats = {
+        #         "loc": torch.zeros(()),
+        #         "scale": torch.ones(()),
+        #     }
+        # elif stats is None and obs_norm_state_dict is not None:
+        #     obs_stats = obs_norm_state_dict
+        # else:
+        #     obs_stats = stats
+        # obs_stats["standard_normal"] = True
+        # obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
+        # # if obs_norm_state_dict:
+        # #     obs_norm.load_state_dict(obs_norm_state_dict)
+        # env.append_transform(obs_norm)
     if norm_rewards:
         reward_scaling = 1.0
         reward_loc = 0.0
@@ -286,12 +286,15 @@ def parallel_env_constructor(
     return parallel_env
 
 
-def recover_pixels(pixels, stats):
-    return (
-        (255 * (pixels * stats["scale"] + stats["loc"]))
-        .clamp(min=0, max=255)
-        .to(torch.uint8)
-    )
+def recover_pixels(pixels, stats=None):
+    if stats is not None:
+        return (
+            (255 * (pixels * stats["scale"] + stats["loc"]))
+            .clamp(min=0, max=255)
+            .to(torch.uint8)
+        )
+    
+    return (pixels * 255).to(torch.uint8)
 
 
 @torch.inference_mode()
@@ -318,11 +321,11 @@ def call_record(
     if cfg.record_video and record._count % cfg.record_interval == 0:
         world_model_td = sampled_tensordict
 
-        true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats)
+        true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats=None)
 
-        reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats)
-        with autocast(dtype=torch.float16):
-            world_model_td = world_model_td.select("state", "belief", "reward")
+        reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats=None)
+        with autocast(dtype=torch.float16), torch.no_grad():
+            # world_model_td = world_model_td.select("state", "belief", "reward")
             world_model_td = model_based_env.rollout(
                 max_steps=true_pixels.shape[1],
                 policy=actor_model,
@@ -331,7 +334,7 @@ def call_record(
             )
         imagine_pxls = recover_pixels(
             model_based_env.decode_obs(world_model_td)["next", "reco_pixels"],
-            stats,
+            stats=stats,
         )
 
         stacked_pixels = torch.cat([true_pixels, reco_pixels, imagine_pxls], dim=-1)

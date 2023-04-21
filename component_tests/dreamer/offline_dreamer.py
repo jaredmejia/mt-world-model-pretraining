@@ -50,7 +50,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenExperienceReplay
+from datasets import KitchenExperienceReplay, KitchenSubTrajectoryReplay
 
 config_fields = [
     (config_field.name, config_field.type, config_field)
@@ -82,12 +82,6 @@ def create_custom_env(env_name, render_imgs, image_size=64):
     
     custom_env = gym.make(env_name, render_imgs=render_imgs)
     custom_env = GymWrapper(custom_env, from_pixels=True)
-    # pixel_keys =["pixels", ("next", "pixels")]
-    # env_transforms = Compose(
-    #     ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
-    # )
-    # custom_env = TransformedEnv(custom_env, env_transforms)
-    # custom_env = TransformedEnv(custom_env, CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys))
 
     return custom_env
 
@@ -274,11 +268,12 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # get kitchen_transforms
     kitchen_transforms = offline_kitchen_transforms((cfg.batch_size, cfg.batch_length), cfg.image_size)
 
-    # load offline data into replay buffer
-    replay_buffer = KitchenExperienceReplay(
+    # load offline data into sub trajectory replay buffer
+    replay_buffer = KitchenSubTrajectoryReplay(
         'kitchen-complete-v0', 
         observation_type='image_joints', 
         batch_size=cfg.batch_size,
+        batch_length=cfg.batch_length,
         transform=kitchen_transforms
     )
 
@@ -299,19 +294,6 @@ def main(cfg: "DictConfig"):  # noqa: F821
         state_dim_gsde=state_dim_gsde,
         custom_env=custom_env,
     )
-    # def create_env_fn(num_workers):
-    #     """Creates an instance of the environment."""
-
-    #     # 1.2 Create env vector
-    #     vec_env = ParallelEnv(
-    #         create_env_fn=EnvCreator(lambda: create_custom_env(env_name=cfg.env_name, from_pixels=cfg.from_pixels)),
-    #         num_workers=num_workers,
-    #     )
-
-    #     return vec_env
-    # create_env_fn = EnvCreator(lambda: create_custom_env(env_name=cfg.env_name, render_imgs=cfg.from_pixels))
-    # vec_env = ParallelEnv(create_env_fn=create_env_fn, num_workers=cfg.num_workers)
-
 
     # get device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
