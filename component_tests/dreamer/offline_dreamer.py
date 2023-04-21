@@ -1,4 +1,5 @@
 import dataclasses
+from datetime import datetime
 from pathlib import Path
 import os
 import sys
@@ -16,6 +17,7 @@ from dreamer_utils import (
     transformed_env_constructor,
 )
 from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 
 # float16
 from torch.cuda.amp import autocast, GradScaler
@@ -263,6 +265,18 @@ def update_value(value_loss, scaler3, value_opt, value_model, cfg, logger, i, j,
     return sampled_tensordict
 
 
+def save_wmodels(latent_wmodel, cond_wmodel, save_path, cfg, i):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+        # save cfg
+        with open(os.path.join(save_path, "config.yaml"), "w") as f:
+            OmegaConf.save(cfg, f)
+
+    torch.save(latent_wmodel.state_dict(), os.path.join(save_path, f"latent_wmodel_{i}.pt"))
+    torch.save(cond_wmodel.state_dict(), os.path.join(save_path, f"cond_wmodel_{i}.pt"))
+
+
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
@@ -343,9 +357,12 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # create gradscalers
     scaler1 = GradScaler()
 
-    max_steps = 1000
+    max_steps_train = 1000
+    ckpt_save_interval = 60
+    ckpt_save_min_steps = 600
+    save_path = f'{cfg.env_name}-offline-dreamer-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
 
-    for i in tqdm.tqdm(range(1, max_steps + 1),
+    for i in tqdm.tqdm(range(1, max_steps_train + 1),
                         smoothing=0.1):
         
         for j in range(cfg.optim_steps_per_batch):
@@ -368,6 +385,16 @@ def main(cfg: "DictConfig"):  # noqa: F821
             cfg,
             world_model
         )
+
+        # save model
+        if i > ckpt_save_min_steps and i % ckpt_save_interval == 0:
+            save_wmodels(
+                model_based_env.world_model[0],
+                world_model,
+                save_path,
+                cfg,
+                i,
+            )
 
 
 if __name__ == "__main__":
