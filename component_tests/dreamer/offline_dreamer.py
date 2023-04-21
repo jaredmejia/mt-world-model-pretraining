@@ -22,7 +22,7 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.nn.utils import clip_grad_norm_
 from torchrl.data import UnboundedContinuousTensorSpec
 from torchrl.envs import CenterCrop, Compose, EnvCreator, ParallelEnv, ToTensorImage, TransformedEnv
-from torchrl.envs.transforms import TensorDictPrimer
+from torchrl.envs.transforms import TensorDictPrimer, ObservationNorm
 from torchrl.modules.tensordict_module.exploration import (
     AdditiveGaussianWrapper,
     OrnsteinUhlenbeckProcessWrapper,
@@ -86,7 +86,7 @@ def create_custom_env(env_name, render_imgs, image_size=64):
     return custom_env
 
 
-def get_proof_env(cfg, custom_env):
+def get_env_obs_stats(cfg, custom_env):
     key, init_env_steps, stats = None, None, None
     if not cfg.vecnorm and cfg.norm_stats:
         if not hasattr(cfg, "init_env_steps"):
@@ -106,7 +106,7 @@ def get_proof_env(cfg, custom_env):
     _, obs_norm_state_dict = retrieve_observation_norms_state_dict(proof_env)[0]
     proof_env.close()
 
-    return proof_env, obs_norm_state_dict
+    return obs_norm_state_dict
 
 
 def get_dreamer_losses(world_model, actor_model, value_model, model_based_env, cfg):
@@ -130,7 +130,7 @@ def make_logger(cfg):
         experiment_name=exp_name,
         wandb_kwargs={
             "project": "torchrl",
-            "group": f"Dreamer_offline2_{cfg.env_name}",
+            "group": f"Dreamer_offline_full{cfg.env_name}",
             "offline": cfg.offline_logging,
             'entity': 'neuropioneers'
         },
@@ -138,17 +138,21 @@ def make_logger(cfg):
     return logger
 
 
-def offline_kitchen_transforms(batch_size, image_size):
+def offline_kitchen_transforms(batch_size, image_size, state_dim, hidden_dim, obs_stats):
     if isinstance(batch_size, int):
         batch_size = (batch_size,)
 
     fill_keys = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
-                    shape=torch.Size([*batch_size, 30]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
-                    shape=torch.Size([*batch_size, 200]), dtype=torch.float32)}, default_value=0, random=False)
+                    shape=torch.Size([*batch_size, state_dim]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
+                    shape=torch.Size([*batch_size, hidden_dim]), dtype=torch.float32)}, default_value=0, random=False)
     pixel_keys =["pixels", ("next", "pixels")]
     img_transform = CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys)
 
-    kitchen_transforms = Compose(fill_keys, img_transform)
+    if obs_stats is not None:
+        obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
+        kitchen_transforms = Compose(fill_keys, img_transform, obs_norm)
+    else:
+        kitchen_transforms = Compose(fill_keys, img_transform)
 
     return kitchen_transforms
 
@@ -170,9 +174,6 @@ def update_world_model(world_model_loss, scaler1, world_model_opt, world_model, 
             and (record._count + 1) % cfg.record_interval == 0
         ):
             sampled_tensordict_save = (
-                # sampled_tensordict.select(
-                #     "next", "state","belief", "reward","observation" # remove observation later
-                # )[0].detach().to_tensordict()
                 sampled_tensordict[:4].detach().clone().to_tensordict()
             )
         else:
@@ -265,24 +266,11 @@ def update_value(value_loss, scaler3, value_opt, value_model, cfg, logger, i, j,
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
-    # get kitchen_transforms
-    kitchen_transforms = offline_kitchen_transforms((cfg.batch_size, cfg.batch_length), cfg.image_size)
-
-    # load offline data into sub trajectory replay buffer
-    replay_buffer = KitchenSubTrajectoryReplay(
-        'kitchen-complete-v0', 
-        observation_type='image_joints', 
-        batch_size=cfg.batch_size,
-        batch_length=cfg.batch_length,
-        transform=kitchen_transforms
-    )
-
     # create custom env
     custom_env = create_custom_env('kitchen-complete-v0', render_imgs=True, image_size=cfg.image_size)
 
-    # get proof env and stats
-    # proof_env, obs_norm_state_dict = get_proof_env(cfg, custom_env)
-    # (a)
+    # get env obs stats
+    # obs_norm_state_dict = get_env_obs_stats(cfg, custom_env)
     obs_norm_state_dict = None
 
     # create parallel env constructor
@@ -337,15 +325,23 @@ def main(cfg: "DictConfig"):  # noqa: F821
         log_keys=cfg.recorder_log_keys,
     )
 
+    # get kitchen_transforms
+    kitchen_transforms = offline_kitchen_transforms((cfg.batch_size, cfg.batch_length), cfg.image_size, cfg.state_dim, cfg.rssm_hidden_dim, obs_norm_state_dict)
+
+    # load offline data into sub trajectory replay buffer
+    replay_buffer = KitchenSubTrajectoryReplay(
+        'kitchen-complete-v0', 
+        observation_type='image_joints', 
+        batch_size=cfg.batch_size,
+        batch_length=cfg.batch_length,
+        transform=kitchen_transforms
+    )
+
     # get optimizers
     world_model_opt = torch.optim.Adam(world_model.parameters(), lr=cfg.world_model_lr)
-    actor_opt = torch.optim.Adam(actor_model.parameters(), lr=cfg.actor_value_lr)
-    value_opt = torch.optim.Adam(value_model.parameters(), lr=cfg.actor_value_lr)
 
     # create gradscalers
     scaler1 = GradScaler()
-    scaler2 = GradScaler()
-    scaler3 = GradScaler()
 
     max_steps = 1000
 
@@ -359,35 +355,19 @@ def main(cfg: "DictConfig"):  # noqa: F821
                 device, non_blocking=True
             )
 
-            # transform sampled_tensordict
-            sampled_tensordict = kitchen_transforms(sampled_tensordict)
-
             # update world model
             sampled_tensordict, sampled_tensordict_save = update_world_model(world_model_loss, scaler1, world_model_opt, world_model, cfg, logger, i, j, sampled_tensordict, record)
-
-            # update actor network
-            sampled_tensordict = update_actor(actor_loss, scaler2, actor_opt, actor_model, cfg, logger, i, j, sampled_tensordict)
-
-            # update value network
-            sampled_tensordict = update_value(value_loss, scaler3, value_opt, value_model, cfg, logger, i, j, sampled_tensordict)
-
-        # stats = retrieve_stats_from_state_dict(obs_norm_state_dict)
-        # if cfg.record_video and (record._count + 1) % cfg.record_interval == 0:
-        #     # put each element of stats on device
-        #     stats = {k: v.to(device) for k, v in stats.items()}
-        stats = None # (a)
 
         call_record(
             logger,
             record,
             i,
             sampled_tensordict_save,
-            stats,
+            None,
             model_based_env,
-            actor_model,
             cfg,
+            world_model
         )
-        del stats
 
 
 if __name__ == "__main__":

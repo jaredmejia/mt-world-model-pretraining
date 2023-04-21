@@ -5,6 +5,7 @@
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Callable, Optional, Sequence, Union
 
+from tensordict.tensordict import TensorDict
 from torchrl.data import UnboundedContinuousTensorSpec
 from torchrl.envs import ParallelEnv
 from torchrl.envs.common import EnvBase
@@ -297,6 +298,52 @@ def recover_pixels(pixels, stats=None):
     return (pixels * 255).to(torch.uint8)
 
 
+def conditional_model_rollout(tensordict, latent_wmodel, cond_wmodel):
+    """Rollout a model conditioned on a single pixel observation.
+    
+    Args:
+        tensordict (TensorDict): a TensorDict containing the initial state and action with batch dimension and time dimension.
+        latent_wmodel (nn.Module): a latent world model. in_keys should be ("state", "belief", "action"). out_keys should be ("state", "belief").
+        cond_wmodel (nn.Module): a conditional world model. in_keys should be ("state", "belief", "action", ("next", "pixels")). out_keys should be (("next", "state"), ("next", "belief")).
+
+    Returns:
+        TensorDict: a TensorDict containing the rollout results with batch dimension and time dimension.
+        """
+    bs = tensordict.shape[0]
+    horizon = tensordict.shape[1]
+    posterior_td = tensordict[:, 0].clone()
+    actions = tensordict[("action")].clone()
+
+    latent_wmodel.eval()
+    cond_wmodel.eval()
+
+    posteriors_list = []
+    with torch.no_grad():
+        for i in range(horizon):
+            posterior_td_next = TensorDict({}, [])
+            posterior_td[("action")] = actions[:, i].clone()
+
+            if i == 0:
+                posterior_td = cond_wmodel(posterior_td.clone().unsqueeze(0).select("state", ("next", "pixels"), "belief", "action"))[0]
+                posterior_td_next[("next", "state")] = posterior_td[("next", "state")].clone()
+                posterior_td_next[("next", "belief")] = posterior_td[("next", "belief")].clone()
+
+            else:
+                posterior_td = latent_wmodel[0](posterior_td.clone().select("state", "belief", "action"))
+                posterior_td_next[("next", "state")] = posterior_td["state"].clone()
+                posterior_td_next[("next", "belief")] = posterior_td["belief"].clone()
+    
+            posteriors_list.append(posterior_td_next)
+            posterior_td = posterior_td_next.clone()
+            posterior_td = posterior_td.rename_key(("next", "state"), ("state",))
+            posterior_td = posterior_td.rename_key(("next", "belief"), ("belief",))
+
+    rollout_td = TensorDict({}, batch_size=(bs, horizon))
+    rollout_td["next", "state"] = torch.stack([p["next", "state"] for p in posteriors_list], dim=1)
+    rollout_td["next", "belief"] = torch.stack([p["next", "belief"] for p in posteriors_list], dim=1)
+
+    return rollout_td
+
 @torch.inference_mode()
 def call_record(
     logger,
@@ -305,8 +352,8 @@ def call_record(
     sampled_tensordict,
     stats,
     model_based_env,
-    actor_model,
     cfg,
+    cond_wmodel=None,
 ):
     td_record = record(None)
     if td_record is not None and logger is not None:
@@ -321,21 +368,18 @@ def call_record(
     if cfg.record_video and record._count % cfg.record_interval == 0:
         world_model_td = sampled_tensordict
 
-        true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats=None)
+        true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats=stats)
+        reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats=stats)
 
-        reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats=None)
-        with autocast(dtype=torch.float16), torch.no_grad():
-            # world_model_td = world_model_td.select("state", "belief", "reward")
-            world_model_td = model_based_env.rollout(
-                max_steps=true_pixels.shape[1],
-                policy=actor_model,
-                auto_reset=False,
-                tensordict=world_model_td[:, 0],
-            )
-        imagine_pxls = recover_pixels(
-            model_based_env.decode_obs(world_model_td)["next", "reco_pixels"],
-            stats=stats,
+        # model rollout taking actions according to data
+        rollout_td = conditional_model_rollout(
+            world_model_td.clone(), model_based_env.world_model[0], cond_wmodel
         )
+        with torch.no_grad():
+            imagine_pxls = recover_pixels(
+                model_based_env.decode_obs(rollout_td)["next", "reco_pixels"],
+                stats=stats,
+            )
 
         stacked_pixels = torch.cat([true_pixels, reco_pixels, imagine_pxls], dim=-1)
         if logger is not None:

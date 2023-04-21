@@ -6,7 +6,7 @@ async_collection: True
 record_video: 1
 frame_skip: 2
 batch_size: 64 # 50
-batch_length: 20 # 50
+batch_length: 50 # 20 # 50
 total_frames: 5000000
 world_model_lr: 6e-4
 actor_value_lr: 8e-5
@@ -22,9 +22,13 @@ record_interval: 30
 max_frames_per_traj: 280 # 1000
 record_frames: 280 # 1000 
 batch_transform: 1
-state_dim: 30
-rssm_hidden_dim: 200
+
+# dreamerconfig
+state_dim: 256 # 30
+rssm_hidden_dim: 256 #200
+mlp_num_units: 400
 grad_clip: 100
+# world_model_lr
 
 grayscale: False
 image_size : 64
@@ -34,7 +38,7 @@ center_crop:
 
 
 buffer_size: 20000
-init_env_steps: 1000
+init_env_steps: 100
 init_random_frames: 5000
 logger: wandb # csv
 offline_logging: False
