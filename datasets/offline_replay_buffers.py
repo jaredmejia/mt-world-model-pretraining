@@ -1,6 +1,8 @@
 from typing import Callable, Optional
 
 import gym
+import h5py
+import metaworld
 import numpy as np
 import torch
 
@@ -13,11 +15,15 @@ from torchrl.data.replay_buffers.writers import Writer
 from torchrl.envs import CenterCrop, Compose, ToTensorImage, TransformedEnv
 from torchrl.envs.libs.gym import GymWrapper
 
-from .dataset_utils import qlearning_kitchen_dataset
-from .transforms import KitchenFilterState
+from .dataset_utils import qlearning_offline_dataset
+from .transforms import KitchenFilterState, MetaWorldFilterState
 
 
-class KitchenExperienceReplay(TensorDictReplayBuffer):
+METAWORLD_DATA_PATHS = {
+    "door-open-v2": "", # TODO: mohan
+}
+
+class OfflineExperienceReplay(TensorDictReplayBuffer):
     def __init__(
             self,
             env_name: str,
@@ -60,19 +66,38 @@ class KitchenExperienceReplay(TensorDictReplayBuffer):
             from_pixels = True
             pixel_keys =["pixels", ("next", "pixels")]
             state_keys = ["observations", ("next", "observations")]
-            env_transforms = Compose(
-                ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
-                KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
-            )
+
+            if 'kitchen' in env_name:
+                env_transforms = Compose(
+                    ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
+                    KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
+                )
+            else: # metaworld
+                env_transforms = Compose(
+                    ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
+                    MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
+                )
         else:
             from_pixels = False
             env_transforms = None
         
-        env = gym.make(env_name, render_imgs=from_pixels)
-        env = GymWrapper(env, from_pixels=from_pixels)
-        env = TransformedEnv(env, env_transforms)
+        if 'kitchen' in env_name:
+            env = gym.make(env_name, render_imgs=from_pixels)
+            env = GymWrapper(env, from_pixels=from_pixels)
+            env = TransformedEnv(env, env_transforms)
+            raw_dataset = env.get_dataset()
+        
+        else: # otherwise metaworld
+            mt10 = metaworld.MT10(env_name)
+            training_env = mt10.train_classes[env_name]()
+            task = [task for task in mt10.train_tasks if task.env_name == env_name][0]
+            training_env.set_task(task)
+            
+            env = GymWrapper(training_env, from_pixels=from_pixels)
+            env = TransformedEnv(env, env_transforms)
+            raw_dataset = h5py.File(METAWORLD_DATA_PATHS[env_name], 'r')
 
-        dataset = qlearning_kitchen_dataset(env, observation_type=observation_type)
+        dataset = qlearning_offline_dataset(env, raw_dataset, env_name, observation_type=observation_type)
 
         if observation_type == "image_joints":
             data_dict = {k: torch.from_numpy(item) for k, item in dataset.items() if isinstance(item, np.ndarray)}
@@ -140,7 +165,7 @@ class KitchenExperienceReplay(TensorDictReplayBuffer):
         dataset["done"][0] = 0
         
 
-class KitchenSubTrajectoryReplay(KitchenExperienceReplay):
+class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
     def __init__(
             self,
             env_name: str,

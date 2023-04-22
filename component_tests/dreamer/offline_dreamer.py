@@ -52,7 +52,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenExperienceReplay, KitchenSubTrajectoryReplay
+from datasets import KitchenSubTrajectoryReplay
 
 config_fields = [
     (config_field.name, config_field.type, config_field)

@@ -55,7 +55,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenExperienceReplay, KitchenSubTrajectoryReplay
+from datasets import KitchenSubTrajectoryReplay
 
 from offline_dreamer import create_custom_env, offline_kitchen_transforms
 from dreamer_utils import conditional_model_rollout, recover_pixels

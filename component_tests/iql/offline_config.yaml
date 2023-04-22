@@ -16,7 +16,7 @@ target_update_polyak: 0.995
 multi_step: 1.0
 gamma: 0.99
 max_steps: 500000
-eval_interval: 1000
+eval_interval: 1 # 1000
 actor_dropout: 0.1
 critic_dropout: 0.0
 value_dropout: 0.0

@@ -80,8 +80,7 @@ def total_to_instant_rewards(total_rewards, terminal_idxs, num_trajs):
 
 
 
-def qlearning_kitchen_dataset(env, terminate_on_end=False, observation_type="default"):
-    dataset = env.get_dataset()
+def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, observation_type="default"):
 
     if observation_type == "default":
         obs_ = []
@@ -93,6 +92,12 @@ def qlearning_kitchen_dataset(env, terminate_on_end=False, observation_type="def
         next_images_ = []
         joints_ = []
         next_joints_ = []
+
+        if 'kitchen' in env_name:
+            obs_dim = 9
+        else: # metaworld
+            obs_dim = 4
+
     else:
         raise ValueError("Invalid observation type")
 
@@ -115,8 +120,9 @@ def qlearning_kitchen_dataset(env, terminate_on_end=False, observation_type="def
 
             next_image = dataset["images"][i+1]
 
-            joint = dataset["observations"][i][:9].astype(np.float32)
-            next_joint = dataset["observations"][i+1][:9].astype(np.float32)
+            joint = dataset["observations"][i][:obs_dim].astype(np.float32)
+            next_joint = dataset["observations"][i+1][:obs_dim].astype(np.float32)
+
 
         action = dataset['actions'][i].astype(np.float32)
         total_reward = dataset['rewards'][i].astype(np.float32)

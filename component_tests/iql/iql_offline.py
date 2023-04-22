@@ -21,29 +21,8 @@ from torchrl.objectives.iql import IQLLoss
 from torchrl.record.loggers import generate_exp_name, get_logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenExperienceReplay, KitchenFilterState
+from datasets import OfflineExperienceReplay, env_maker
 from modules import PixelVecNet
-
-
-def env_maker(env_name, frame_skip=1, device="cpu", from_pixels=False):
-    if 'kitchen' in env_name:
-        import d4rl
-        import gym
-        custom_env = gym.make(env_name, render_imgs=from_pixels)
-        custom_env = GymWrapper(custom_env, frame_skip=frame_skip, from_pixels=from_pixels )
-        if from_pixels:
-            pixel_keys =["pixels", ("next", "pixels")]
-            state_keys = ["observation", ("next", "observation")]
-            env_transforms = Compose(
-                ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
-                KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
-            )
-            custom_env = TransformedEnv(custom_env, env_transforms)
-        return custom_env
-    
-    return GymEnv(
-        env_name, device=device, frame_skip=frame_skip, from_pixels=from_pixels
-    )
 
 
 def get_actor(cfg, test_env, num_actions, in_keys):
@@ -314,7 +293,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
     target_net_updater = SoftUpdate(loss_module, cfg.target_update_polyak)
 
     # Make Replay Buffer
-    replay_buffer = KitchenExperienceReplay('kitchen-complete-v0', observation_type=cfg.observation_type)
+    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type)
 
     # Optimizers
     params = list(loss_module.parameters())
