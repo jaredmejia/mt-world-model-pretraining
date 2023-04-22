@@ -100,6 +100,11 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
 
     else:
         raise ValueError("Invalid observation type")
+    
+    if 'kitchen' in env_name:
+        max_steps = 280
+    else:
+        max_steps = 500
 
     N = dataset['rewards'].shape[0]
     action_ = []
@@ -111,7 +116,8 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         use_timeouts = True
 
     episode_step = 0
-    for i in range(N-1):
+    # for i in range(N-1):
+    for i in range(100):
         if observation_type == "default":
             obs = dataset["observations"][i].astype(np.float32)
             new_obs = dataset["observations"][i+1].astype(np.float32)
@@ -131,7 +137,7 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         if use_timeouts:
             final_timestep = dataset['timeouts'][i]
         else:
-            final_timestep = (episode_step == env._max_episode_steps - 1)
+            final_timestep = (episode_step == max_steps - 1)
         if (not terminate_on_end) and final_timestep:
             # Skip this transition and don't apply terminals on the last step of an episode
             episode_step = 0

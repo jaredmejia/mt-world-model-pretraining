@@ -10,9 +10,9 @@ class LearnedSpatialEmbedding(nn.Module):
     """Learned spatial embedding for cnn outputs, as introduced in PTR paper."""
     def __init__(
             self,
+            channels: int,
             height: int,
             width: int,
-            channels: int,
             num_features: int = 8,
     ):
         super().__init__()
@@ -46,8 +46,11 @@ class PixelVecNet(nn.Module):
             cnn_kwargs: Optional[dict] = None,
             learned_spatial_embedding_kwargs: Optional[dict] = None,
             include_action: bool = False,
+            image_size: int = 64,
     ):
         super().__init__()
+
+        self.image_size = image_size
         
         if mlp and mlp_kwargs:
             raise ValueError("Cannot specify both mlp and mlp_kwargs")
@@ -72,11 +75,22 @@ class PixelVecNet(nn.Module):
         if learned_spatial_embedding:
             self.learned_spatial_embedding = learned_spatial_embedding
         elif learned_spatial_embedding_kwargs:
-            self.learned_spatial_embedding = LearnedSpatialEmbedding(**learned_spatial_embedding_kwargs)
+            spatial_emb_dims = self._get_spatial_embedding_dims()
+            self.learned_spatial_embedding = LearnedSpatialEmbedding(
+                *spatial_emb_dims,
+                **learned_spatial_embedding_kwargs
+            )
         else:
             self.learned_spatial_embedding = None
 
         self.include_action = include_action
+
+    def _get_spatial_embedding_dims(self):
+        fake_img = torch.zeros(1, 3, self.image_size, self.image_size)
+        with torch.no_grad():
+            fake_img = self.cnn(fake_img)
+
+        return fake_img.shape[1:]
 
     def forward(self, *inputs: Tuple[torch.Tensor]) -> torch.Tensor:
         if self.include_action:

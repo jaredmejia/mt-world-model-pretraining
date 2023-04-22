@@ -1,9 +1,8 @@
 from typing import Callable, Optional
 
-import gym
 import h5py
-import metaworld
 import numpy as np
+import os
 import torch
 
 from tensordict.tensordict import make_tensordict
@@ -12,15 +11,14 @@ from torchrl.data.replay_buffers import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import Sampler
 from torchrl.data.replay_buffers.storages import LazyMemmapStorage
 from torchrl.data.replay_buffers.writers import Writer
-from torchrl.envs import CenterCrop, Compose, ToTensorImage, TransformedEnv
-from torchrl.envs.libs.gym import GymWrapper
+from torchrl.envs import Compose
 
 from .dataset_utils import qlearning_offline_dataset
-from .transforms import KitchenFilterState, MetaWorldFilterState
+from .env_makers import env_maker
 
 
 METAWORLD_DATA_PATHS = {
-    "door-open-v2": "", # TODO: mohan
+    "door-open-v2": "./metaworld_data/merged_data_door-open-v2_10_small_trajs.h5", # TODO: mohan
 }
 
 class OfflineExperienceReplay(TensorDictReplayBuffer):
@@ -39,6 +37,7 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             use_timeout_as_done: bool = True,
     ):
         self.use_timeout_as_done = use_timeout_as_done  
+        self.transform = transform
         dataset = self._get_dataset_direct(env_name, observation_type)
 
         dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
@@ -62,40 +61,16 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         self.extend(dataset)
 
     def _get_dataset_direct(self, env_name, observation_type):
-        if 'image' in observation_type:
-            from_pixels = True
-            pixel_keys =["pixels", ("next", "pixels")]
-            state_keys = ["observations", ("next", "observations")]
 
-            if 'kitchen' in env_name:
-                env_transforms = Compose(
-                    ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
-                    KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
-                )
-            else: # metaworld
-                env_transforms = Compose(
-                    ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
-                    MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
-                )
-        else:
-            from_pixels = False
-            env_transforms = None
+        from_pixels = "image" in observation_type
+        env = env_maker(env_name, from_pixels=from_pixels, env_transforms=self.transform)
         
         if 'kitchen' in env_name:
-            env = gym.make(env_name, render_imgs=from_pixels)
-            env = GymWrapper(env, from_pixels=from_pixels)
-            env = TransformedEnv(env, env_transforms)
             raw_dataset = env.get_dataset()
         
         else: # otherwise metaworld
-            mt10 = metaworld.MT10(env_name)
-            training_env = mt10.train_classes[env_name]()
-            task = [task for task in mt10.train_tasks if task.env_name == env_name][0]
-            training_env.set_task(task)
-            
-            env = GymWrapper(training_env, from_pixels=from_pixels)
-            env = TransformedEnv(env, env_transforms)
-            raw_dataset = h5py.File(METAWORLD_DATA_PATHS[env_name], 'r')
+            mw_data_path = os.path.join(os.path.dirname(__file__), METAWORLD_DATA_PATHS[env_name])
+            raw_dataset = h5py.File(mw_data_path, 'r')
 
         dataset = qlearning_offline_dataset(env, raw_dataset, env_name, observation_type=observation_type)
 
@@ -127,13 +102,11 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             dataset.set("done", dataset.get("terminal"))
         dataset.rename_key("rewards", "reward")
         dataset.rename_key("actions", "action")
+        dataset["action"] = dataset["action"].to(torch.float32)
 
         if observation_type == "image_joints":
             dataset.rename_key("next_pixels", ("next", "pixels"))
         
-        if env_transforms is not None:
-            dataset = env_transforms(dataset)
-
         # checking dtypes
         for key, spec in env.observation_spec.items(True, True):
             dataset[key] = dataset[key].to(spec.dtype)

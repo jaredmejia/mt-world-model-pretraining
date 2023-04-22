@@ -11,17 +11,17 @@ import tqdm
 from functorch import vmap
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
-from torchrl.envs import CenterCrop, Compose, EnvCreator, ParallelEnv, ToTensorImage, TransformedEnv
-from torchrl.envs.libs.gym import GymEnv, GymWrapper
+from torchrl.envs import EnvCreator, ParallelEnv
 from torchrl.envs.utils import set_exploration_mode
-from torchrl.modules import ConvNet, MLP, ProbabilisticActor, ValueOperator
+from torchrl.modules import MLP, ProbabilisticActor, ValueOperator
 from torchrl.modules.distributions import TanhNormal
 from torchrl.objectives import SoftUpdate
 from torchrl.objectives.iql import IQLLoss
 from torchrl.record.loggers import generate_exp_name, get_logger
 
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import OfflineExperienceReplay, env_maker
+from datasets import OfflineExperienceReplay, env_maker, get_env_transforms
 from modules import PixelVecNet
 
 
@@ -45,9 +45,6 @@ def get_actor(cfg, test_env, num_actions, in_keys):
                 "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
         }
         learned_spatial_embedding_kwargs = {
-            "height": 8,
-            "width": 8,
-            "channels": 64,
             "num_features": 8,
         }
 
@@ -115,9 +112,6 @@ def get_critic(critic_dropout, in_keys):
                 "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
         }
         learned_spatial_embedding_kwargs = {
-            "height": 8,
-            "width": 8,
-            "channels": 64,
             "num_features": 8,
         }
 
@@ -161,9 +155,6 @@ def get_value(value_dropout, in_keys):
                 "aggregator_kwargs": {"num_channels": 64, "num_groups": 4},
         }
         learned_spatial_embedding_kwargs = {
-            "height": 8,
-            "width": 8,
-            "channels": 64,
             "num_features": 8,
         }
 
@@ -211,7 +202,7 @@ def get_value_estimate(tensordict, iql_loss_module, device):
     return avg_val, max_val
 
 
-@hydra.main(version_base=None, config_path=".", config_name="offline_config")
+@hydra.main(version_base=None, config_path=".", config_name="metaworld_offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
     device = (
@@ -233,12 +224,20 @@ def main(cfg: "DictConfig"):  # noqa: F821
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
 
+    # set environment and transforms
+    env_transforms = get_env_transforms(
+        cfg.env_name,
+        cfg.image_size,
+        from_pixels=cfg.from_pixels,
+        train_type='iql',
+    )
+
     def env_factory(num_workers):
         """Creates an instance of the environment."""
 
         # 1.2 Create env vector
         vec_env = ParallelEnv(
-            create_env_fn=EnvCreator(lambda: env_maker(env_name=cfg.env_name, from_pixels=cfg.from_pixels)),
+            create_env_fn=EnvCreator(lambda: env_maker(env_name=cfg.env_name, from_pixels=cfg.from_pixels, image_size=cfg.image_size, env_transforms=env_transforms.clone())),
             num_workers=num_workers,
         )
 
@@ -293,7 +292,9 @@ def main(cfg: "DictConfig"):  # noqa: F821
     target_net_updater = SoftUpdate(loss_module, cfg.target_update_polyak)
 
     # Make Replay Buffer
-    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type)
+    print("Creating Replay Buffer...")
+    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, transform=env_transforms)
+    print("Replay Buffer Created!")
 
     # Optimizers
     params = list(loss_module.parameters())
