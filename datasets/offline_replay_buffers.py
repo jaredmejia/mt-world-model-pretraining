@@ -5,6 +5,8 @@ import numpy as np
 import os
 import torch
 
+import torchsnapshot
+from tensordict import TensorDict
 from tensordict.tensordict import make_tensordict
 from torchrl.collectors.utils import split_trajectories
 from torchrl.data.replay_buffers import TensorDictReplayBuffer
@@ -207,4 +209,64 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
         batch_td = torch.stack(batch)
         
         return batch_td
-            
+
+
+class RSSMStateReplayBuffer(TensorDictReplayBuffer):
+    def __init__(
+            self,
+            snapshot_path: str,
+            batch_size: int = 256,
+            sampler: Optional[Sampler] = None,
+            writer: Optional[Writer] = None,
+            collate_fn: Optional[Callable] = None,
+            pin_memory: bool = False,
+            prefetch: Optional[int] = None,
+            transform: Optional["Transform"] = None,  # noqa-F821
+    ):
+        self.transform = transform
+        dataset = self._get_rssm_dataset(snapshot_path)
+
+        dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+
+        storage = LazyMemmapStorage(dataset.shape[0])
+        super().__init__(
+            batch_size=batch_size,
+            storage=storage,
+            sampler=sampler,
+            writer=writer,
+            collate_fn=collate_fn,
+            pin_memory=pin_memory,
+            prefetch=prefetch,
+            transform=transform,
+        )
+        self.extend(dataset)
+
+    def _get_rssm_dataset(self, snapshot_path):
+        snapshot = torchsnapshot.Snapshot(path=snapshot_path)
+        encoded_dataset = TensorDict({}, [])
+        target_state = {"state": encoded_dataset}
+        snapshot.restore(app_state=target_state)
+
+        # remove first element of each trajectory
+        dataset_size = encoded_dataset.shape[0]
+
+        traj_end_indices = torch.where(encoded_dataset['done'])[0]
+        if not encoded_dataset['done'][-1]:
+            traj_end_indices = torch.cat((traj_end_indices, torch.tensor([dataset_size - 1])))
+        
+        remove_indices = torch.cat((torch.tensor([0]), traj_end_indices[:-1] + 1))
+        keep_indices = torch.tensor([i for i in range(dataset_size) if i not in remove_indices])
+
+        encoded_dataset = encoded_dataset[keep_indices]
+
+        # replace observation with belief + state
+        encoded_dataset['observation'] = torch.cat((encoded_dataset['belief'], encoded_dataset['state']), dim=1)
+        encoded_dataset['next', 'observation'] = torch.cat((encoded_dataset['next', 'belief'], encoded_dataset['next', 'state']), dim=1)
+        
+        # only keep necessary keys
+        encoded_dataset = encoded_dataset.select('observation', 'action', 'reward', 'done', 'terminal', ('next', 'observation'), ('next', 'reward'), ('next', 'done'), ('next', 'terminal'))
+
+        assert len(encoded_dataset) == dataset_size - len(traj_end_indices), "Dataset size mismatch"
+        
+        return encoded_dataset
+    
