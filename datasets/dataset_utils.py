@@ -102,7 +102,7 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         raise ValueError("Invalid observation type")
     
     if 'kitchen' in env_name:
-        max_steps = env._max_episode_steps
+        max_steps = 280
     else:
         max_steps = 500
 
