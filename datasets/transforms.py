@@ -50,7 +50,7 @@ class MetaWorldFilterState(ObservationTransform):
             super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
 
         def _apply_transform(self, obs: torch.Tensor):
-            return obs[..., :4]
+            return obs[..., :4].to(torch.float32)
 
         @_apply_to_composite
         def transform_observation_spec(self, observation_spec):
@@ -58,6 +58,6 @@ class MetaWorldFilterState(ObservationTransform):
                     minimum=-1.0,
                     maximum=1.0,
                     shape=torch.zeros(4).shape,
-                    dtype=observation_spec.dtype,
+                    dtype=torch.float32,
                     device=observation_spec.device,
               )

@@ -88,10 +88,17 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             raw_dataset = env.get_dataset()
         
         else: # otherwise metaworld
-            mt10 = metaworld.MT10(env_name)
+            mt10 = metaworld.MT10()
             training_env = mt10.train_classes[env_name]()
             task = [task for task in mt10.train_tasks if task.env_name == env_name][0]
             training_env.set_task(task)
+
+            original_render = training_env.render
+            # override the render method for training_env
+            def render(self, mode='human', width=64, height=64):
+                return original_render(mode)
+                
+            training_env.render = render.__get__(training_env, type(training_env))
             
             env = GymWrapper(training_env, from_pixels=from_pixels)
             env = TransformedEnv(env, env_transforms)
@@ -127,6 +134,7 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             dataset.set("done", dataset.get("terminal"))
         dataset.rename_key("rewards", "reward")
         dataset.rename_key("actions", "action")
+        dataset["action"] = dataset["action"].to(torch.float32)
 
         if observation_type == "image_joints":
             dataset.rename_key("next_pixels", ("next", "pixels"))

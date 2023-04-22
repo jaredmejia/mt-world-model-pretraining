@@ -1,6 +1,6 @@
-env_name: kitchen-complete-v0
+env_name: "door-open-v2"
 env_library: gym
-exp_name: "iql_kitchen-complete"
+exp_name: "door-open-v2"
 observation_type: "image_joints"
 seed: 42
 async_collection: 1

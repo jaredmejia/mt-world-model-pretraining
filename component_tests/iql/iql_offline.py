@@ -20,8 +20,9 @@ from torchrl.objectives import SoftUpdate
 from torchrl.objectives.iql import IQLLoss
 from torchrl.record.loggers import generate_exp_name, get_logger
 
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import OfflineExperienceReplay, env_maker
+from datasets import MetaWorldFilterState, OfflineExperienceReplay, env_maker
 from modules import PixelVecNet
 
 
@@ -293,7 +294,16 @@ def main(cfg: "DictConfig"):  # noqa: F821
     target_net_updater = SoftUpdate(loss_module, cfg.target_update_polyak)
 
     # Make Replay Buffer
-    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type)
+    print("Creating Replay Buffer...")
+    from_pixels = True
+    pixel_keys =["pixels", ("next", "pixels")]
+    state_keys = ["observation", ("next", "observation")]
+
+    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, transform=Compose(
+                    CenterCrop(96, in_keys=pixel_keys, out_keys=pixel_keys),
+                    MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
+                ))
+    print("Replay Buffer Created!")
 
     # Optimizers
     params = list(loss_module.parameters())
@@ -320,6 +330,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
 
         # sample from replay buffer
         sampled_tensordict = replay_buffer.sample(cfg.batch_size).clone()
+        sampled_tensordict["action"] = sampled_tensordict["action"].to(torch.float32)
 
         loss_td = loss_module(sampled_tensordict)
 

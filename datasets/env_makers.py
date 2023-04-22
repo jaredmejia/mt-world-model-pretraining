@@ -12,11 +12,20 @@ def env_maker(env_name, frame_skip=1, device="cpu", from_pixels=False):
     else:
         import metaworld
 
-        mt10 = metaworld.MT10(env_name)
-        training_env = mt10.train_classes[env_name]()
+        mt10 = metaworld.MT10()
+
+        custom_env = mt10.train_classes[env_name]()
         task = [task for task in mt10.train_tasks if task.env_name == env_name][0]
-        training_env.set_task(task)
-        
+        custom_env.set_task(task)
+
+        original_render = custom_env.render
+        # override the render method for training_env
+        def render(self, mode='human', width=64, height=64):
+            return original_render(mode)
+            
+        custom_env.render = render.__get__(custom_env, type(custom_env))
+        # custom_env.camera_name = 'corner2'
+        custom_env = GymWrapper(custom_env, frame_skip=frame_skip, from_pixels=from_pixels )
 
     if from_pixels:
         pixel_keys =["pixels", ("next", "pixels")]
