@@ -2,6 +2,7 @@ from typing import Callable, Optional
 
 import h5py
 import numpy as np
+import os
 import torch
 
 from tensordict.tensordict import make_tensordict
@@ -17,7 +18,7 @@ from .env_makers import env_maker
 
 
 METAWORLD_DATA_PATHS = {
-    "door-open-v2": "", # TODO: mohan
+    "door-open-v2": "./metaworld_data/merged_data_door-open-v2_10_small_trajs.h5", # TODO: mohan
 }
 
 class OfflineExperienceReplay(TensorDictReplayBuffer):
@@ -68,7 +69,8 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             raw_dataset = env.get_dataset()
         
         else: # otherwise metaworld
-            raw_dataset = h5py.File(METAWORLD_DATA_PATHS[env_name], 'r')
+            mw_data_path = os.path.join(os.path.dirname(__file__), METAWORLD_DATA_PATHS[env_name])
+            raw_dataset = h5py.File(mw_data_path, 'r')
 
         dataset = qlearning_offline_dataset(env, raw_dataset, env_name, observation_type=observation_type)
 

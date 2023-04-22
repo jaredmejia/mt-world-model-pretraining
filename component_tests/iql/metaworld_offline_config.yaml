@@ -33,6 +33,8 @@ frames_per_batch: 1000 # 5*200
 max_frames_per_traj: 280
 num_workers: 1
 
+image_size: 64
+
 record_frames: 10000
 loss_function: smooth_l1
 batch_transform: 1
