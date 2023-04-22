@@ -7,3 +7,7 @@ component_tests/iql/outputs/
 __pycache__/
 data_collection/train_agent/sac/sac_logging
 data_collection/train_agent/sac/outputs/
+ckpts/
+*logs/
+*debug*/
+encoded_data/
