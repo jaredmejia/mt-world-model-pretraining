@@ -140,7 +140,7 @@ def make_logger(cfg):
     return logger
 
 
-def offline_kitchen_transforms(batch_size, image_size, state_dim, hidden_dim, obs_stats):
+def offline_kitchen_transforms(batch_size, image_size, state_dim, hidden_dim, obs_stats=None):
     if isinstance(batch_size, int):
         batch_size = (batch_size,)
 
@@ -265,7 +265,7 @@ def update_value(value_loss, scaler3, value_opt, value_model, cfg, logger, i, j,
     return sampled_tensordict
 
 
-def save_wmodels(latent_wmodel, cond_wmodel, save_path, cfg, i):
+def save_wmodels(model_based_env, cond_wmodel, save_path, cfg, i):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
@@ -273,7 +273,7 @@ def save_wmodels(latent_wmodel, cond_wmodel, save_path, cfg, i):
         with open(os.path.join(save_path, "config.yaml"), "w") as f:
             OmegaConf.save(cfg, f)
 
-    torch.save(latent_wmodel.state_dict(), os.path.join(save_path, f"latent_wmodel_{i}.pt"))
+    torch.save(model_based_env.state_dict(), os.path.join(save_path, f"model_based_env_{i}.pt"))
     torch.save(cond_wmodel.state_dict(), os.path.join(save_path, f"cond_wmodel_{i}.pt"))
 
 
@@ -387,9 +387,9 @@ def main(cfg: "DictConfig"):  # noqa: F821
         )
 
         # save model
-        if i > ckpt_save_min_steps and i % ckpt_save_interval == 0:
+        if (i > ckpt_save_min_steps and i % ckpt_save_interval == 0) or i == max_steps_train:
             save_wmodels(
-                model_based_env.world_model[0],
+                model_based_env,
                 world_model,
                 save_path,
                 cfg,
