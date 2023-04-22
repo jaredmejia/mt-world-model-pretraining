@@ -212,7 +212,7 @@ def get_value_estimate(tensordict, iql_loss_module, device):
     return avg_val, max_val
 
 
-@hydra.main(version_base=None, config_path=".", config_name="offline_config")
+@hydra.main(version_base=None, config_path=".", config_name="metaworld_offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
     device = (
