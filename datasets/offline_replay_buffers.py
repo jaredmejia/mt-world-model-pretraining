@@ -247,18 +247,6 @@ class RSSMStateReplayBuffer(TensorDictReplayBuffer):
         target_state = {"state": encoded_dataset}
         snapshot.restore(app_state=target_state)
 
-        # remove first element of each trajectory
-        dataset_size = encoded_dataset.shape[0]
-
-        traj_end_indices = torch.where(encoded_dataset['done'])[0]
-        if not encoded_dataset['done'][-1]:
-            traj_end_indices = torch.cat((traj_end_indices, torch.tensor([dataset_size - 1])))
-        
-        remove_indices = torch.cat((torch.tensor([0]), traj_end_indices[:-1] + 1))
-        keep_indices = torch.tensor([i for i in range(dataset_size) if i not in remove_indices])
-
-        encoded_dataset = encoded_dataset[keep_indices]
-
         # replace observation with belief + state
         encoded_dataset['observation'] = torch.cat((encoded_dataset['belief'], encoded_dataset['state']), dim=1)
         encoded_dataset['next', 'observation'] = torch.cat((encoded_dataset['next', 'belief'], encoded_dataset['next', 'state']), dim=1)
@@ -266,7 +254,5 @@ class RSSMStateReplayBuffer(TensorDictReplayBuffer):
         # only keep necessary keys
         encoded_dataset = encoded_dataset.select('observation', 'action', 'reward', 'done', 'terminal', ('next', 'observation'), ('next', 'reward'), ('next', 'done'), ('next', 'terminal'))
 
-        assert len(encoded_dataset) == dataset_size - len(traj_end_indices), "Dataset size mismatch"
-        
         return encoded_dataset
     

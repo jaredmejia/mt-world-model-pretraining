@@ -1,3 +1,3 @@
-from .offline_replay_buffers import OfflineExperienceReplay, KitchenSubTrajectoryReplay
+from .offline_replay_buffers import OfflineExperienceReplay, KitchenSubTrajectoryReplay, RSSMStateReplayBuffer
 from .transforms import KitchenFilterState, MetaWorldFilterState, get_env_transforms
 from .env_makers import env_maker
