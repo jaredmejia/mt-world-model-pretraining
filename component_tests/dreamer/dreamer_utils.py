@@ -112,8 +112,8 @@ def make_env_transforms(
     if norm_obs_only:
         reward_scaling = 1.0
         reward_loc = 0.0
-    if reward_scaling is not None:
-        env.append_transform(RewardScaling(reward_loc, reward_scaling))
+    # if reward_scaling is not None:
+    #     env.append_transform(RewardScaling(reward_loc, reward_scaling))
 
     double_to_float_list = []
     float_to_double_list = []
@@ -366,27 +366,40 @@ def call_record(
                 )
     # Compute observation reco
     if cfg.record_video and record._count % cfg.record_interval == 0:
-        world_model_td = sampled_tensordict
-
-        true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats=stats)
-        reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats=stats)
-
-        # model rollout taking actions according to data
-        rollout_td = conditional_model_rollout(
-            world_model_td.clone(), model_based_env.world_model[0], cond_wmodel
+        compute_obs_reco_imagined(
+            logger,
+            sampled_tensordict,
+            model_based_env,
+            cond_wmodel,
+            stats=stats,
         )
-        with torch.no_grad():
-            imagine_pxls = recover_pixels(
-                model_based_env.decode_obs(rollout_td)["next", "reco_pixels"],
-                stats=stats,
-            )
 
-        stacked_pixels = torch.cat([true_pixels, reco_pixels, imagine_pxls], dim=-1)
-        if logger is not None:
-            logger.log_video(
-                "pixels_rec_and_imag",
-                stacked_pixels.detach().cpu(),
-            )
+
+@torch.inference_mode()
+def compute_obs_reco_imagined(logger, sampled_tensordict, model_based_env, cond_wmodel, stats=None):
+    # Compute observation reco
+    world_model_td = sampled_tensordict
+
+    true_pixels = recover_pixels(world_model_td[("next", "pixels")], stats=stats)
+    reco_pixels = recover_pixels(world_model_td["next", "reco_pixels"], stats=stats)
+
+    # model rollout taking actions according to data
+    rollout_td = conditional_model_rollout(
+        world_model_td.clone(), model_based_env.world_model[0], cond_wmodel
+    )
+    with torch.no_grad():
+        imagine_pxls = recover_pixels(
+            model_based_env.decode_obs(rollout_td)["next", "reco_pixels"],
+            stats=stats,
+        )
+
+    stacked_pixels = torch.cat([true_pixels, reco_pixels, imagine_pxls], dim=-1)
+    if logger is not None:
+        logger.log_video(
+            "pixels_rec_and_imag",
+            stacked_pixels.detach().cpu(),
+            format=None
+        )
 
 
 def grad_norm(optimizer: torch.optim.Optimizer):
