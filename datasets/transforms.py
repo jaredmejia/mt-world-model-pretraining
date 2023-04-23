@@ -91,6 +91,13 @@ class MetaWorldConvertToFloat(ObservationTransform):
               )
         
 
+def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
+    default_hidden_transform = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
+                    shape=torch.Size([*batch_size, state_dim]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
+                    shape=torch.Size([*batch_size, hidden_dim]), dtype=torch.float32)}, default_value=0, random=False)
+    return default_hidden_transform
+
+
 def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql', batch_size=None, state_dim=None, hidden_dim=None, obs_stats=None):
     
     state_keys = ["observation", ("next", "observation")]
@@ -106,11 +113,9 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
         if isinstance(batch_size, int):
             batch_size = (batch_size,)
 
-        fill_dreamer_hidden_keys = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
-                        shape=torch.Size([*batch_size, state_dim]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
-                        shape=torch.Size([*batch_size, hidden_dim]), dtype=torch.float32)}, default_value=0, random=False)
+        dreamer_transform = fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim)
         
-        transforms.append(fill_dreamer_hidden_keys)
+        transforms.append(dreamer_transform)
 
         if obs_stats is not None:
             obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
@@ -134,3 +139,5 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
         transforms.append(env_transform)
 
     return transforms
+
+
