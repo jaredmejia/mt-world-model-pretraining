@@ -4,7 +4,7 @@ import torch
 from torchrl.envs import CenterCrop, Compose, ObservationTransform, ToTensorImage
 from torchrl.envs.transforms.transforms import _apply_to_composite
 from torchrl.data import BoundedTensorSpec, UnboundedContinuousTensorSpec
-from torchrl.envs.transforms import TensorDictPrimer, ObservationNorm
+from torchrl.envs.transforms import TensorDictPrimer, ObservationNorm, UnsqueezeTransform
 
 class KitchenFilterState(ObservationTransform):
         def __init__(
@@ -90,6 +90,15 @@ class MetaWorldConvertToFloat(ObservationTransform):
                     device=observation_spec.device,
               )
         
+class SuccessUnsqueeze(UnsqueezeTransform):
+    def __init__(self, unsqueeze_dim=-1, in_keys=None, out_keys=None):
+        super().__init__(unsqueeze_dim=unsqueeze_dim, in_keys=in_keys, out_keys=out_keys)
+        
+    def _apply_transform(self, observation: torch.Tensor) -> torch.Tensor:
+        if len(observation.shape) == 0:
+            observation = observation.unsqueeze(self.unsqueeze_dim).to(torch.bool)
+        return observation
+        
 
 def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
     default_hidden_transform = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
@@ -98,7 +107,7 @@ def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
     return default_hidden_transform
 
 
-def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql', batch_size=None, state_dim=None, hidden_dim=None, obs_stats=None):
+def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql', batch_size=None, state_dim=None, hidden_dim=None, obs_stats=None, eval=False):
     
     state_keys = ["observation", ("next", "observation")]
     if from_pixels:
@@ -106,22 +115,24 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
     else:
         pixel_keys = None
         
-    
     transforms = []
     
     if 'kitchen' in env_name:
 
-        env_transforms = (
+        env_transforms = [
             ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys),
             KitchenFilterState(in_keys=state_keys, out_keys=state_keys),
-        )
+        ]
 
     else: # metaworld
-        env_transforms = (
+        env_transforms = [
             ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys),
             MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
             MetaWorldConvertToFloat(in_keys=["action", ("next", "action")], out_keys=["action", ("next", "action")]),
-        )
+        ]
+
+        if eval:
+             env_transforms.append(SuccessUnsqueeze(unsqueeze_dim=-1, in_keys=["success"], out_keys=["success"]))
 
     if train_type == 'dreamer':
         if isinstance(batch_size, int):

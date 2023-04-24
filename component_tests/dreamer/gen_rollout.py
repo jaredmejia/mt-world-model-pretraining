@@ -105,7 +105,7 @@ def save_rollout(tensordict, model_based_env, cond_wmodel, save_dir):
 
 
 def save_video(stacked_pixels, out_fname):
-    wandb_video = wandb.Video(stacked_pixels.cpu(), fps=6, format="mp4")
+    wandb_video = wandb.Video(stacked_pixels.cpu(), fps=6)
     prepped_video = wandb_video._prepare_video(wandb_video.data)
     clip = mpy.ImageSequenceClip(list(prepped_video), fps=6)
     clip.write_videofile(out_fname)    
