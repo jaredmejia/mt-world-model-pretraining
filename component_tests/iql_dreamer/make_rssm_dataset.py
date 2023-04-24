@@ -26,7 +26,7 @@ sys.path.append(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
 )
-from datasets import KitchenSubTrajectoryReplay
+from datasets import SubTrajectoryReplay
 
 
 def get_hidden_per_traj(
@@ -133,7 +133,7 @@ def main():
         cfg.state_dim,
         cfg.rssm_hidden_dim,
     )
-    replay_buffer = KitchenSubTrajectoryReplay(
+    replay_buffer = SubTrajectoryReplay(
         "kitchen-complete-v0",
         observation_type="image_joints",
         batch_size=cfg.batch_size,

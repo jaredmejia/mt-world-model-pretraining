@@ -91,7 +91,6 @@ def get_eval_tasks(cfg, multitask=False):
     return mt10, eval_env_names, eval_tasks
     
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config_path', type=str, required=True)

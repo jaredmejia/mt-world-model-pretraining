@@ -141,7 +141,7 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         dataset["done"][0] = 0
         
 
-class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
+class SubTrajectoryReplay(OfflineExperienceReplay):
     def __init__(
             self,
             env_name: str,

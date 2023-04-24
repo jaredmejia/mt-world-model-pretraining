@@ -55,7 +55,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenSubTrajectoryReplay
+from datasets import SubTrajectoryReplay
 
 from offline_dreamer import create_custom_env, offline_kitchen_transforms
 from dreamer_utils import conditional_model_rollout, recover_pixels
@@ -156,7 +156,7 @@ def main():
     )
 
     # load offline data into sub trajectory replay buffer
-    replay_buffer = KitchenSubTrajectoryReplay(
+    replay_buffer = SubTrajectoryReplay(
         'kitchen-complete-v0', 
         observation_type='image_joints', 
         batch_size=cfg.batch_size,

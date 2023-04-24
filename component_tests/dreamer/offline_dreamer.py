@@ -62,7 +62,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenSubTrajectoryReplay, env_maker, get_env_transforms
+from datasets import SubTrajectoryReplay, env_maker, get_env_transforms
 from modules import PixelVecNet, PixelVecObsDecoder
 from modules.objectives import PixelVecDreamerModelLoss
 
@@ -394,7 +394,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
     logger = make_logger(cfg)
 
     # load offline data into sub trajectory replay buffer
-    replay_buffer = KitchenSubTrajectoryReplay(
+    replay_buffer = SubTrajectoryReplay(
         'kitchen-complete-v0', 
         observation_type=observation_type, 
         batch_size=cfg.batch_size,
