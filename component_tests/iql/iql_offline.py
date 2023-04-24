@@ -293,7 +293,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
 
     # Make Replay Buffer
     print("Creating Replay Buffer...")
-    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, transform=env_transforms)
+    replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, base_transform=env_transforms)
     print("Replay Buffer Created!")
 
     # Optimizers
@@ -353,8 +353,15 @@ def main(cfg: "DictConfig"):  # noqa: F821
 
         if i % cfg.save_interval == 0:
             names = ["actor", "qvalue", "value"]
+
+            # create save path if it doesn't exist
+            if not os.path.exists(cfg.save_path):
+                os.makedirs(cfg.save_path)
+
             for idx in range(3):
                 torch.save(model[idx].state_dict(), f"{cfg.save_path}/{names[idx]}_{i}.pt")
+            # save the optimizer
+            torch.save(optimizer.state_dict(), f"{cfg.save_path}/optimizer_{i}.pt")
 
         if i % cfg.eval_interval == 0:
 

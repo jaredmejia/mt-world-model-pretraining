@@ -18,9 +18,15 @@ from torchrl.envs import Compose
 from .dataset_utils import qlearning_offline_dataset
 from .env_makers import env_maker
 
-
+DATA_FOLDER = "/home/mohan/work/research/bdreamm/playground"
 METAWORLD_DATA_PATHS = {
-    "door-open-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_door-open-v2_500_f32_small_trajs.h5", # TODO: mohan
+    "door-open-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_door-open-v2_130_trajs.h5", 
+    "drawer-close-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_drawer-close-v2_130_trajs.h5",
+    "button-press-topdown-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_button-press-topdown-v2_130_trajs.h5", 
+    "window-close-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_window-close-v2_130_trajs.h5",
+    "reach-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_reach-v2_130_trajs.h5",
+    "drawer-open-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_drawer-open-v2_130_trajs.h5", 
+    "window-open-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_window-open-v2_130_trajs.h5",
 }
 
 class OfflineExperienceReplay(TensorDictReplayBuffer):
