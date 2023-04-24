@@ -27,7 +27,7 @@ def env_maker(env_name, frame_skip=1, from_pixels=False, image_size=64, env_tran
         custom_env.render = render.__get__(custom_env, type(custom_env))
         custom_env = GymWrapper(custom_env, frame_skip=frame_skip, from_pixels=from_pixels)
 
-    # env_transforms = get_env_transforms(env_name, from_pixels=from_pixels, **transform_kwargs)
-    custom_env = TransformedEnv(custom_env, env_transforms)
+    if env_transforms is not None:
+        custom_env = TransformedEnv(custom_env, env_transforms)
     
     return custom_env

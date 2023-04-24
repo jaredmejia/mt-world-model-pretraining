@@ -115,8 +115,7 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         use_timeouts = True
 
     episode_step = 0
-    # for i in range(N-1):
-    for i in range(100):
+    for i in range(N-1):
         if observation_type == "default":
             obs = dataset["observations"][i].astype(np.float32)
             new_obs = dataset["observations"][i+1].astype(np.float32)

@@ -15,6 +15,7 @@ from dreamer_utils import (
     make_recorder_env,
     parallel_env_constructor,
     transformed_env_constructor,
+    compute_obs_reco_imagined
 )
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -52,7 +53,7 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import KitchenSubTrajectoryReplay
+from datasets import KitchenSubTrajectoryReplay, env_maker, get_env_transforms
 
 config_fields = [
     (config_field.name, config_field.type, config_field)
@@ -131,8 +132,8 @@ def make_logger(cfg):
         logger_name="./offline_dreamer_logs",
         experiment_name=exp_name,
         wandb_kwargs={
-            "project": "torchrl",
-            "group": f"Dreamer_offline_full{cfg.env_name}",
+            "project": "kitchen-world-model",
+            "group": f"{cfg.env_name}",
             "offline": cfg.offline_logging,
             'entity': 'neuropioneers'
         },
@@ -159,7 +160,7 @@ def offline_kitchen_transforms(batch_size, image_size, state_dim, hidden_dim, ob
     return kitchen_transforms
 
 
-def update_world_model(world_model_loss, scaler1, world_model_opt, world_model, cfg, logger, i, j, sampled_tensordict, record):
+def update_world_model(world_model_loss, scaler1, world_model_opt, world_model, cfg, logger, i, j, sampled_tensordict):
     with autocast(dtype=torch.float16):
         model_loss_td, sampled_tensordict = world_model_loss(
             sampled_tensordict
@@ -173,7 +174,7 @@ def update_world_model(world_model_loss, scaler1, world_model_opt, world_model, 
         # If we are logging videos, we keep some frames.
         if (
             cfg.record_video
-            and (record._count + 1) % cfg.record_interval == 0
+            and i % cfg.record_interval == 0
         ):
             sampled_tensordict_save = (
                 sampled_tensordict[:4].detach().clone().to_tensordict()
@@ -283,34 +284,38 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # create custom env
     custom_env = create_custom_env('kitchen-complete-v0', render_imgs=True, image_size=cfg.image_size)
 
-    # get env obs stats
-    # obs_norm_state_dict = get_env_obs_stats(cfg, custom_env)
-    obs_norm_state_dict = None
-
-    # create parallel env constructor
-    action_dim_gsde, state_dim_gsde = None, None
-    create_env_fn = parallel_env_constructor(
-        cfg=cfg,
-        obs_norm_state_dict=obs_norm_state_dict,
-        action_dim_gsde=action_dim_gsde,
-        state_dim_gsde=state_dim_gsde,
-        custom_env=custom_env,
+    # set transforms
+    env_transforms_args = (cfg.env_name, cfg.image_size)
+    env_transforms_kwargs = {
+        "from_pixels": cfg.from_pixels,
+        "state_dim": cfg.state_dim,
+        "hidden_dim": cfg.rssm_hidden_dim,
+    }
+    base_env_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(), train_type=None, **env_transforms_kwargs
     )
+    buffer_sample_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(cfg.batch_size, cfg.batch_length), train_type='dreamer', **env_transforms_kwargs
+    )
+    proof_env_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(), train_type='dreamer', **env_transforms_kwargs
+    )
+
+    # get proof env
+    proof_env = env_maker(env_name=cfg.env_name, from_pixels=cfg.from_pixels, image_size=cfg.image_size, env_transforms=proof_env_transforms.clone())
 
     # get device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Create the different components of dreamer
     world_model, model_based_env, actor_model, value_model, policy = make_dreamer(
-        obs_norm_state_dict=obs_norm_state_dict,
+        obs_norm_state_dict=None,
         cfg=cfg,
         device=device,
         use_decoder_in_env=True,
         action_key="action",
         value_key="state_value",
-        proof_environment=transformed_env_constructor(
-            cfg, stats={"loc": 0.0, "scale": 1.0}, custom_env=custom_env
-        )(),
+        proof_environment=proof_env
     )
 
     # get dreamer losses
@@ -320,27 +325,6 @@ def main(cfg: "DictConfig"):  # noqa: F821
 
     # get logger
     logger = make_logger(cfg)
-    video_tag = f"Dreamer_{cfg.env_name}_policy_test" if cfg.record_video else ""
-
-    # get recorder
-    record = Recorder(
-        record_frames=cfg.record_frames,
-        frame_skip=cfg.frame_skip,
-        policy_exploration=policy,
-        recorder=make_recorder_env(
-            cfg=cfg,
-            video_tag=video_tag,
-            obs_norm_state_dict=obs_norm_state_dict,
-            logger=logger,
-            create_env_fn=create_env_fn,
-            custom_env=custom_env,
-        ),
-        record_interval=cfg.record_interval,
-        log_keys=cfg.recorder_log_keys,
-    )
-
-    # get kitchen_transforms
-    kitchen_transforms = offline_kitchen_transforms((cfg.batch_size, cfg.batch_length), cfg.image_size, cfg.state_dim, cfg.rssm_hidden_dim, obs_norm_state_dict)
 
     # load offline data into sub trajectory replay buffer
     replay_buffer = KitchenSubTrajectoryReplay(
@@ -348,7 +332,8 @@ def main(cfg: "DictConfig"):  # noqa: F821
         observation_type='image_joints', 
         batch_size=cfg.batch_size,
         batch_length=cfg.batch_length,
-        transform=kitchen_transforms
+        base_transform=base_env_transforms,
+        sample_transform=buffer_sample_transforms,
     )
 
     # get optimizers
@@ -373,18 +358,18 @@ def main(cfg: "DictConfig"):  # noqa: F821
             )
 
             # update world model
-            sampled_tensordict, sampled_tensordict_save = update_world_model(world_model_loss, scaler1, world_model_opt, world_model, cfg, logger, i, j, sampled_tensordict, record)
+            sampled_tensordict, sampled_tensordict_save = update_world_model(world_model_loss, scaler1, world_model_opt, world_model, cfg, logger, i, j, sampled_tensordict)
 
-        call_record(
-            logger,
-            record,
-            i,
-            sampled_tensordict_save,
-            None,
-            model_based_env,
-            cfg,
-            world_model
-        )
+        if (
+            cfg.record_video
+            and i % cfg.record_interval == 0
+        ):
+            compute_obs_reco_imagined(
+                logger,
+                sampled_tensordict_save,
+                model_based_env,
+                world_model
+            )
 
         # save model
         if (i > ckpt_save_min_steps and i % ckpt_save_interval == 0) or i == max_steps_train:

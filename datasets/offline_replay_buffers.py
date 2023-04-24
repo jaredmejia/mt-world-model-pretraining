@@ -5,6 +5,8 @@ import numpy as np
 import os
 import torch
 
+import torchsnapshot
+from tensordict import TensorDict
 from tensordict.tensordict import make_tensordict
 from torchrl.collectors.utils import split_trajectories
 from torchrl.data.replay_buffers import TensorDictReplayBuffer
@@ -32,12 +34,12 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             collate_fn: Optional[Callable] = None,
             pin_memory: bool = False,
             prefetch: Optional[int] = None,
-            transform: Optional["Transform"] = None,  # noqa-F821
+            base_transform: Optional["Transform"] = None,  # noqa-F821
             split_trajs: bool = False,
             use_timeout_as_done: bool = True,
     ):
         self.use_timeout_as_done = use_timeout_as_done  
-        self.transform = transform
+        self.base_transform = base_transform
         dataset = self._get_dataset_direct(env_name, observation_type)
 
         dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
@@ -56,14 +58,14 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             collate_fn=collate_fn,
             pin_memory=pin_memory,
             prefetch=prefetch,
-            transform=transform,
+            transform=base_transform,
         )
         self.extend(dataset)
 
     def _get_dataset_direct(self, env_name, observation_type):
 
         from_pixels = "image" in observation_type
-        env = env_maker(env_name, from_pixels=from_pixels, env_transforms=self.transform)
+        env = env_maker(env_name, from_pixels=from_pixels, env_transforms=self.base_transform)
         
         if 'kitchen' in env_name:
             raw_dataset = env.get_dataset()
@@ -109,8 +111,9 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         
         # checking dtypes
         for key, spec in env.observation_spec.items(True, True):
-            dataset[key] = dataset[key].to(spec.dtype)
-            dataset["next", key] = dataset["next", key].to(spec.dtype)
+            if key != "pixels":
+                dataset[key] = dataset[key].to(spec.dtype)
+                dataset["next", key] = dataset["next", key].to(spec.dtype)
         for key, spec in env.input_spec.items(True, True):
             dataset[key] = dataset[key].to(spec.dtype)
         dataset["reward"] = dataset["reward"].to(env.reward_spec.dtype)
@@ -145,11 +148,13 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
             observation_type: str = 'image_joints',
             batch_size: int = 256,
             batch_length: int = 50,
-            transform: Optional[Callable] = None,
+            base_transform: Optional[Callable] = None,
+            sample_transform: Optional[Callable] = None,
             split_trajs: bool = False,
             use_timeout_as_done: bool = True
     ):
         self.use_timeout_as_done = use_timeout_as_done  
+        self.base_transform = base_transform
         dataset = self._get_dataset_direct(env_name, observation_type)
 
         dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
@@ -165,18 +170,20 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
         self.batch_size = batch_size
         self.dataset = dataset
 
-        if transform is None:
-            transform = Compose()
-        elif not isinstance(transform, Compose):
-            transform = Compose(transform)
-        transform.eval()
-        self._transform = transform
+        if sample_transform is None:
+            sample_transform = Compose()
+        elif not isinstance(sample_transform, Compose):
+            sample_transform = Compose(sample_transform)
+        sample_transform.eval()
+        self.sample_transform = sample_transform
     
     def sample(self, batch_size: Optional[int] = None):
         if batch_size is None:
             batch_size = self.batch_size
+
         batch = self._get_sub_traj_batch(self.dataset, self.valid_indices, self.batch_length, batch_size)
-        return self._transform(batch)
+
+        return self.sample_transform(batch)
     
 
     def _get_valid_indices(self, dataset, batch_length):
@@ -207,4 +214,50 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
         batch_td = torch.stack(batch)
         
         return batch_td
-            
+
+
+class RSSMStateReplayBuffer(TensorDictReplayBuffer):
+    def __init__(
+            self,
+            snapshot_path: str,
+            batch_size: int = 256,
+            sampler: Optional[Sampler] = None,
+            writer: Optional[Writer] = None,
+            collate_fn: Optional[Callable] = None,
+            pin_memory: bool = False,
+            prefetch: Optional[int] = None,
+            transform: Optional["Transform"] = None,  # noqa-F821
+    ):
+        self.transform = transform
+        dataset = self._get_rssm_dataset(snapshot_path)
+
+        dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+
+        storage = LazyMemmapStorage(dataset.shape[0])
+        super().__init__(
+            batch_size=batch_size,
+            storage=storage,
+            sampler=sampler,
+            writer=writer,
+            collate_fn=collate_fn,
+            pin_memory=pin_memory,
+            prefetch=prefetch,
+            transform=transform,
+        )
+        self.extend(dataset)
+
+    def _get_rssm_dataset(self, snapshot_path):
+        snapshot = torchsnapshot.Snapshot(path=snapshot_path)
+        encoded_dataset = TensorDict({}, [])
+        target_state = {"state": encoded_dataset}
+        snapshot.restore(app_state=target_state)
+
+        # replace observation with belief + state
+        encoded_dataset['observation'] = torch.cat((encoded_dataset['belief'], encoded_dataset['state']), dim=1)
+        encoded_dataset['next', 'observation'] = torch.cat((encoded_dataset['next', 'belief'], encoded_dataset['next', 'state']), dim=1)
+        
+        # only keep necessary keys
+        encoded_dataset = encoded_dataset.select('observation', 'action', 'reward', 'done', 'terminal', ('next', 'observation'), ('next', 'reward'), ('next', 'done'), ('next', 'terminal'))
+
+        return encoded_dataset
+    
