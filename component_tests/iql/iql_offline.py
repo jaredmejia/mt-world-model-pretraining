@@ -351,6 +351,11 @@ def main(cfg: "DictConfig"):  # noqa: F821
         for key, value in train_log.items():
             logger.log_scalar(key, value, step=i)
 
+        if i % cfg.save_interval == 0:
+            names = ["actor", "qvalue", "value"]
+            for idx in range(3):
+                torch.save(model[idx].state_dict(), f"{cfg.save_path}/{names[idx]}_{i}.pt")
+
         if i % cfg.eval_interval == 0:
 
             with set_exploration_mode("mean"), torch.no_grad():

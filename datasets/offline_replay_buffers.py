@@ -18,7 +18,7 @@ from .env_makers import env_maker
 
 
 METAWORLD_DATA_PATHS = {
-    "door-open-v2": "./metaworld_data/merged_data_door-open-v2_10_small_trajs.h5", # TODO: mohan
+    "door-open-v2": "/home/mohan/work/research/bdreamm/playground/merged_data_door-open-v2_500_f32_small_trajs.h5", # TODO: mohan
 }
 
 class OfflineExperienceReplay(TensorDictReplayBuffer):
