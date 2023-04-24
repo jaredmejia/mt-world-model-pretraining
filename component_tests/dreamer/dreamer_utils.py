@@ -1,7 +1,5 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
+# based on torchrl example
+
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Callable, Optional, Sequence, Union
 
@@ -25,6 +23,9 @@ from torchrl.envs.transforms import (
     TransformedEnv,
 )
 from torchrl.envs.transforms.transforms import FlattenObservation, TensorDictPrimer
+from torchrl.modules.tensordict_module.world_models import WorldModelWrapper
+from torchrl.modules.models.model_based import RSSMRollout
+from torchrl.modules import SafeSequential, SafeModule
 from torchrl.record.loggers import Logger
 from torchrl.record.recorder import VideoRecorder
 
@@ -39,6 +40,57 @@ LIBS = {
 }
 import torch
 from torch.cuda.amp import autocast
+
+
+def make_pixel_vec_dreamer_world_model(
+        pixel_vec_encoder, pixel_vec_decoder, rssm_prior, rssm_posterior, reward_module
+):
+    # World Model and reward model
+    rssm_rollout = RSSMRollout(
+        SafeModule(
+            rssm_prior,
+            in_keys=["state", "belief", "action"],
+            out_keys=[
+                ("next", "prior_mean"),
+                ("next", "prior_std"),
+                "_",
+                ("next", "belief"),
+            ],
+        ),
+        SafeModule(
+            rssm_posterior,
+            in_keys=[("next", "belief"), ("next", "encoded_latents")],
+            out_keys=[
+                ("next", "posterior_mean"),
+                ("next", "posterior_std"),
+                ("next", "state"),
+            ],
+        ),
+    )
+
+    transition_model = SafeSequential(
+        SafeModule(
+            pixel_vec_encoder,
+            in_keys=[("next", "observation"), ("next", "pixels")],
+            out_keys=[("next", "encoded_latents")],
+        ),
+        rssm_rollout,
+        SafeModule(
+            pixel_vec_decoder,
+            in_keys=[("next", "state"), ("next", "belief")],
+            out_keys=[("next", "reco_pixels"), ("next", "reco_vec")],
+        ),
+    )
+    reward_model = SafeModule(
+        reward_module,
+        in_keys=[("next", "state"), ("next", "belief")],
+        out_keys=[("next", "reward")],
+    )
+    world_model = WorldModelWrapper(
+        transition_model,
+        reward_model,
+    )
+    return world_model
 
 
 def make_env_transforms(
@@ -298,7 +350,7 @@ def recover_pixels(pixels, stats=None):
     return (pixels * 255).to(torch.uint8)
 
 
-def conditional_model_rollout(tensordict, latent_wmodel, cond_wmodel):
+def conditional_model_rollout(tensordict, latent_wmodel, cond_wmodel, observation_type="images"):
     """Rollout a model conditioned on a single pixel observation.
     
     Args:
@@ -317,6 +369,10 @@ def conditional_model_rollout(tensordict, latent_wmodel, cond_wmodel):
     latent_wmodel.eval()
     cond_wmodel.eval()
 
+    cond_wmodel_keys = ["state", ("next", "pixels"), "belief", "action"]
+    if observation_type == "image_joints":
+        cond_wmodel_keys.append(("next", "observation"))
+
     posteriors_list = []
     with torch.no_grad():
         for i in range(horizon):
@@ -324,7 +380,7 @@ def conditional_model_rollout(tensordict, latent_wmodel, cond_wmodel):
             posterior_td[("action")] = actions[:, i].clone()
 
             if i == 0:
-                posterior_td = cond_wmodel(posterior_td.clone().unsqueeze(0).select("state", ("next", "pixels"), "belief", "action"))[0]
+                posterior_td = cond_wmodel(posterior_td.clone().unsqueeze(0).select(*cond_wmodel_keys))[0]
                 posterior_td_next[("next", "state")] = posterior_td[("next", "state")].clone()
                 posterior_td_next[("next", "belief")] = posterior_td[("next", "belief")].clone()
 
@@ -376,7 +432,7 @@ def call_record(
 
 
 @torch.inference_mode()
-def compute_obs_reco_imagined(logger, sampled_tensordict, model_based_env, cond_wmodel, stats=None):
+def compute_obs_reco_imagined(logger, sampled_tensordict, model_based_env, cond_wmodel, observation_type="image", stats=None):
     # Compute observation reco
     world_model_td = sampled_tensordict
 
@@ -385,7 +441,7 @@ def compute_obs_reco_imagined(logger, sampled_tensordict, model_based_env, cond_
 
     # model rollout taking actions according to data
     rollout_td = conditional_model_rollout(
-        world_model_td.clone(), model_based_env.world_model[0], cond_wmodel
+        world_model_td.clone(), model_based_env.world_model[0], cond_wmodel, observation_type=observation_type
     )
     with torch.no_grad():
         imagine_pxls = recover_pixels(

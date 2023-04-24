@@ -59,8 +59,9 @@ class PixelVecNet(nn.Module):
         if learned_spatial_embedding and learned_spatial_embedding_kwargs:
             raise ValueError("Cannot specify both learned_spatial_embedding and learned_spatial_embedding_kwargs")
         
-        if 'device' in cnn_kwargs and 'device' in mlp_kwargs:
-            assert cnn_kwargs['device'] == mlp_kwargs['device'], "CNN and MLP must be on the same device"
+        if cnn_kwargs and mlp_kwargs:
+            if 'device' in cnn_kwargs and 'device' in mlp_kwargs:
+                assert cnn_kwargs['device'] == mlp_kwargs['device'], "CNN and MLP must be on the same device"
         
         if mlp:
             self.mlp = mlp
@@ -99,15 +100,22 @@ class PixelVecNet(nn.Module):
             return self._forward(*inputs)
 
     def _forward_with_action(self, action_inputs: torch.Tensor, vector_inputs: torch.Tensor, pixel_inputs: torch.Tensor) -> torch.Tensor:
-        vector_inputs = torch.cat((vector_inputs, action_inputs), dim=1)
+        vector_inputs = torch.cat((vector_inputs, action_inputs), dim=-1)
         return self._forward(vector_inputs, pixel_inputs)
     
     def _forward(self, vector_inputs: torch.Tensor, pixel_inputs: torch.Tensor) -> torch.Tensor:
-        assert len(pixel_inputs.shape) == 4, "Pixel inputs must be of shape (bs, channels, height, width)"
-        assert len(vector_inputs.shape) == 2, "Vector inputs must be of shape (bs, vector_dim)"
-        assert pixel_inputs.shape[0] == vector_inputs.shape[0], "Batch size of pixel and vector inputs must be equal"
+        *batch_sizes, C, H, W = pixel_inputs.shape
+        if len(batch_sizes) == 0:
+            end_dim = 0
+            
+            assert len(vector_inputs.shape) == 1, "Batch sizes of vector and pixel inputs must match"
 
-        bs = pixel_inputs.shape[0]
+        else:
+            end_dim = len(batch_sizes) - 1
+
+            assert len(vector_inputs.shape) == len(batch_sizes) + 1, "Vector inputs must be of shape (bs, vector_dim)"
+
+        pixel_inputs = torch.flatten(pixel_inputs, start_dim=0, end_dim=end_dim)
 
         # encode pixel inputs
         encoded_pixels = self.cnn(pixel_inputs)
@@ -116,10 +124,11 @@ class PixelVecNet(nn.Module):
         if self.learned_spatial_embedding is not None:
             encoded_pixels = self.learned_spatial_embedding(encoded_pixels)
         
-        encoded_pixels = encoded_pixels.view(bs, -1)
+        encoded_pixels = encoded_pixels.view(*batch_sizes, -1)
+        vector_inputs = vector_inputs.view(*batch_sizes, -1)
 
         # concatenate pixel and vector inputs and pass through MLP
-        cat_input = torch.cat((encoded_pixels, vector_inputs), dim=1)
+        cat_input = torch.cat((encoded_pixels, vector_inputs), dim=-1)
         outputs = self.mlp(cat_input)
 
         return outputs
