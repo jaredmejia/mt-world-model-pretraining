@@ -168,7 +168,7 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
         self.num_sub_trajs = len(self.valid_indices)
         self.batch_length = batch_length
         self.batch_size = batch_size
-        self.dataset = dataset
+        self.dataset = dataset.contiguous()
 
         if sample_transform is None:
             sample_transform = Compose()
@@ -210,7 +210,7 @@ class KitchenSubTrajectoryReplay(OfflineExperienceReplay):
 
         batch = []
         for start_idx in start_idxs:
-            batch.append(dataset[start_idx:start_idx + batch_length])
+            batch.append(dataset[start_idx:start_idx + batch_length].clone())
         batch_td = torch.stack(batch)
         
         return batch_td

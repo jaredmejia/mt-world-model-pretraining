@@ -15,17 +15,26 @@ from dreamer_utils import (
     make_recorder_env,
     parallel_env_constructor,
     transformed_env_constructor,
-    compute_obs_reco_imagined
+    compute_obs_reco_imagined,
+    make_pixel_vec_dreamer_world_model
 )
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
 # float16
 from torch.cuda.amp import autocast, GradScaler
+from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torchrl.data import UnboundedContinuousTensorSpec
 from torchrl.envs import CenterCrop, Compose, EnvCreator, ParallelEnv, ToTensorImage, TransformedEnv
 from torchrl.envs.transforms import TensorDictPrimer, ObservationNorm
+from torchrl.envs.utils import set_exploration_mode
+from torchrl.modules import MLP
+from torchrl.modules.models.model_based import (
+    ObsEncoder,
+    RSSMPosterior,
+    RSSMPrior,
+)
 from torchrl.modules.tensordict_module.exploration import (
     AdditiveGaussianWrapper,
     OrnsteinUhlenbeckProcessWrapper,
@@ -46,7 +55,7 @@ from torchrl.trainers.helpers.envs import (
     retrieve_observation_norms_state_dict,
 )
 from torchrl.trainers.helpers.logger import LoggerConfig
-from torchrl.trainers.helpers.models import DreamerConfig, make_dreamer
+from torchrl.trainers.helpers.models import DreamerConfig, make_dreamer, _dreamer_make_mbenv
 from torchrl.trainers.helpers.replay_buffer import make_replay_buffer, ReplayArgsConfig
 from torchrl.trainers.helpers.trainers import TrainerConfig
 from torchrl.trainers.trainers import Recorder, RewardNormalizer
@@ -54,6 +63,8 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from datasets import KitchenSubTrajectoryReplay, env_maker, get_env_transforms
+from modules import PixelVecNet, PixelVecObsDecoder
+from modules.objectives import PixelVecDreamerModelLoss
 
 config_fields = [
     (config_field.name, config_field.type, config_field)
@@ -112,6 +123,58 @@ def get_env_obs_stats(cfg, custom_env):
     return obs_norm_state_dict
 
 
+def get_pixel_vec_world_model(cfg, proof_env, use_decoder_in_env=False, device=None):
+    mlp_kwargs = {
+        "num_cells": [512],
+        "out_features": 512,
+        "activation_class": nn.ReLU,
+        "dropout": 0.0,
+    }
+    vec_dim = proof_env.observation_spec["observation"].shape[0]
+
+    pixel_vec_decoder_net = PixelVecObsDecoder(vec_dim=vec_dim)
+    pixel_vec_encoder_net = PixelVecNet(mlp_kwargs=mlp_kwargs, cnn=ObsEncoder())
+
+    rssm_prior = RSSMPrior(
+        hidden_dim=cfg.rssm_hidden_dim,
+        rnn_hidden_dim=cfg.rssm_hidden_dim,
+        state_dim=cfg.state_dim,
+        action_spec=proof_env.action_spec,
+    )
+
+    rssm_posterior = RSSMPosterior(
+        hidden_dim=cfg.rssm_hidden_dim, state_dim=cfg.state_dim
+    )
+
+    reward_module = MLP(
+        out_features=1, depth=2, num_cells=cfg.mlp_num_units, activation_class=nn.ELU
+    )
+
+    pixel_vec_world_model = make_pixel_vec_dreamer_world_model(
+        pixel_vec_encoder_net, pixel_vec_decoder_net, rssm_prior, rssm_posterior, reward_module
+    ).to(device)
+
+    # Initialize the world model
+    with torch.no_grad(), set_exploration_mode("random"):
+        tensordict = proof_env.rollout(4)
+        tensordict = tensordict.to_tensordict().to(device)
+        tensordict = tensordict.to(device)
+        pixel_vec_world_model(tensordict)
+
+    model_based_env = _dreamer_make_mbenv(
+        reward_module,
+        rssm_prior,
+        pixel_vec_decoder_net,
+        proof_env,
+        use_decoder_in_env,
+        cfg.state_dim,
+        cfg.rssm_hidden_dim,
+    )
+    model_based_env = model_based_env.to(device)
+
+    return pixel_vec_world_model, model_based_env
+
+
 def get_dreamer_losses(world_model, actor_model, value_model, model_based_env, cfg):
     world_model_loss = DreamerModelLoss(world_model)
     actor_loss = DreamerActorLoss(
@@ -133,7 +196,7 @@ def make_logger(cfg):
         experiment_name=exp_name,
         wandb_kwargs={
             "project": "kitchen-world-model",
-            "group": f"{cfg.env_name}",
+            "group": f"{cfg.env_name}-image_joints",
             "offline": cfg.offline_logging,
             'entity': 'neuropioneers'
         },
@@ -281,8 +344,7 @@ def save_wmodels(model_based_env, cond_wmodel, save_path, cfg, i):
 @hydra.main(version_base=None, config_path=".", config_name="offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
-    # create custom env
-    custom_env = create_custom_env('kitchen-complete-v0', render_imgs=True, image_size=cfg.image_size)
+    observation_type = "image_joints"
 
     # set transforms
     env_transforms_args = (cfg.env_name, cfg.image_size)
@@ -308,20 +370,25 @@ def main(cfg: "DictConfig"):  # noqa: F821
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Create the different components of dreamer
-    world_model, model_based_env, actor_model, value_model, policy = make_dreamer(
-        obs_norm_state_dict=None,
-        cfg=cfg,
-        device=device,
-        use_decoder_in_env=True,
-        action_key="action",
-        value_key="state_value",
-        proof_environment=proof_env
-    )
+    if observation_type == "image_joints":
+        world_model, model_based_env = get_pixel_vec_world_model(cfg, proof_env, use_decoder_in_env=True, device=device)
+        world_model_loss = PixelVecDreamerModelLoss(world_model)
+    
+    else:
+        world_model, model_based_env, actor_model, value_model, policy = make_dreamer(
+            obs_norm_state_dict=None,
+            cfg=cfg,
+            device=device,
+            use_decoder_in_env=True,
+            action_key="action",
+            value_key="state_value",
+            proof_environment=proof_env
+        )
 
-    # get dreamer losses
-    world_model_loss, actor_loss, value_loss = get_dreamer_losses(
-        world_model, actor_model, value_model, model_based_env, cfg
-    )
+        # get dreamer losses
+        world_model_loss, actor_loss, value_loss = get_dreamer_losses(
+            world_model, actor_model, value_model, model_based_env, cfg
+        )
 
     # get logger
     logger = make_logger(cfg)
@@ -329,7 +396,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # load offline data into sub trajectory replay buffer
     replay_buffer = KitchenSubTrajectoryReplay(
         'kitchen-complete-v0', 
-        observation_type='image_joints', 
+        observation_type=observation_type, 
         batch_size=cfg.batch_size,
         batch_length=cfg.batch_length,
         base_transform=base_env_transforms,
@@ -368,7 +435,8 @@ def main(cfg: "DictConfig"):  # noqa: F821
                 logger,
                 sampled_tensordict_save,
                 model_based_env,
-                world_model
+                world_model,
+                observation_type=observation_type
             )
 
         # save model

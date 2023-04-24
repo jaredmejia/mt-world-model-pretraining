@@ -107,20 +107,8 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
         pixel_keys = None
         
     
-    transforms = Compose()
+    transforms = []
     
-    if train_type == 'dreamer':
-        if isinstance(batch_size, int):
-            batch_size = (batch_size,)
-
-        dreamer_transform = fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim)
-        
-        transforms.append(dreamer_transform)
-
-        if obs_stats is not None:
-            obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
-            transforms.append(obs_norm)
-
     if 'kitchen' in env_name:
 
         env_transforms = (
@@ -134,9 +122,23 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
             MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
             MetaWorldConvertToFloat(in_keys=["action", ("next", "action")], out_keys=["action", ("next", "action")]),
         )
-         
+
+    if train_type == 'dreamer':
+        if isinstance(batch_size, int):
+            batch_size = (batch_size,)
+
+        dreamer_transform = fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim)
+        
+        transforms.append(dreamer_transform)
+
+        if obs_stats is not None:
+            obs_norm = ObservationNorm(**obs_stats, in_keys=["pixels"])
+            transforms.append(obs_norm)
+ 
     for env_transform in env_transforms:
         transforms.append(env_transform)
+
+    transforms = Compose(*transforms)
 
     return transforms
 
