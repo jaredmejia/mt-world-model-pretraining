@@ -389,8 +389,8 @@ def main(cfg: "DictConfig"):  # noqa: F821
     save_path = os.path.join(
         'ckpts', 
         f'{cfg.env_task}-offline-dreamer', 
-        f'{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}',
         f'{cfg.exp_name}'
+        f'{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}',
     )
 
     for i in tqdm.tqdm(range(1, max_steps_train + 1),

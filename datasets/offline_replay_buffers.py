@@ -209,12 +209,21 @@ class SubTrajectoryReplay(OfflineExperienceReplay):
 
     def _get_valid_indices(self, dataset, batch_length):
         dataset_size = dataset['done'].shape[0]
-        sub_traj_end_indices = torch.cat((torch.where(dataset['done'])[0], torch.tensor([dataset_size - 1])))
-        max_traj_start_indices = sub_traj_end_indices - batch_length
+
+        print(f'Total number of trajectories: {torch.sum(dataset["done"])}')
+
+        last_is_terminal = dataset['done'][-1]
+
+        if last_is_terminal:
+            traj_end_indices = torch.where(dataset['done'])[0]
+        else:
+            traj_end_indices = torch.cat((torch.where(dataset['done'])[0], torch.tensor([dataset_size - 1])))
+        
+        max_traj_start_indices = traj_end_indices - batch_length
 
         valid_indices = []
         prev_end_idx = 0
-        for max_start, end_idx in zip(max_traj_start_indices, sub_traj_end_indices):
+        for max_start, end_idx in zip(max_traj_start_indices, traj_end_indices):
             valid_indices.append(torch.arange(prev_end_idx, max_start + 1))
             prev_end_idx = end_idx + 1
 
@@ -273,9 +282,9 @@ class RSSMStateReplayBuffer(TensorDictReplayBuffer):
         target_state = {"state": encoded_dataset}
         snapshot.restore(app_state=target_state)
 
-        # replace observation with belief + state
-        encoded_dataset['observation'] = torch.cat((encoded_dataset['belief'], encoded_dataset['state']), dim=1)
-        encoded_dataset['next', 'observation'] = torch.cat((encoded_dataset['next', 'belief'], encoded_dataset['next', 'state']), dim=1)
+        # replace observation with observation + belief + state
+        encoded_dataset['observation'] = torch.cat((encoded_dataset['observation'], encoded_dataset['belief'], encoded_dataset['state']), dim=1)
+        encoded_dataset['next', 'observation'] = torch.cat((encoded_dataset['next', 'observation'], encoded_dataset['next', 'belief'], encoded_dataset['next', 'state']), dim=1)
         
         # only keep necessary keys
         encoded_dataset = encoded_dataset.select('observation', 'action', 'reward', 'done', 'terminal', ('next', 'observation'), ('next', 'reward'), ('next', 'done'), ('next', 'terminal'))

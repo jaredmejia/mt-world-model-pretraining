@@ -196,13 +196,16 @@ def qlearning_offline_dataset(dataset, env_name, terminate_on_end=False, observa
     actions = np.array(action_)
     terminals = np.array(done_)
 
-    # get true sparse rewards from total rewards    
-    total_reward = np.array(total_reward_)
-    terminal_idxs = np.where(terminals)[0]
-    num_trajs = len(terminal_idxs) + 1
-    rewards = total_to_instant_rewards(
-        total_reward, terminal_idxs, num_trajs
-    )
+    if 'kitchen' in env_name:
+        # get true sparse rewards from total rewards    
+        total_reward = np.array(total_reward_)
+        terminal_idxs = np.where(terminals)[0]
+        num_trajs = len(terminal_idxs) + 1
+        rewards = total_to_instant_rewards(
+            total_reward, terminal_idxs, num_trajs
+        )
+    else:
+        rewards = np.array(total_reward_)  
 
     return {
         "observations": observations,
@@ -213,7 +216,7 @@ def qlearning_offline_dataset(dataset, env_name, terminate_on_end=False, observa
     }
 
 
-def multitask_qlearning_offline_dataset(task_to_path, task_to_id, observation_type="image_joints"):
+def multitask_qlearning_offline_dataset(task_to_path, task_to_id, observation_type="image_joints", num_traj_per_task=130):
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
     one_hot_encoder = OneHotEncoder(sparse_output=False)
     one_hot_encoder.fit(np.arange(len(task_to_id)).reshape(-1, 1))
@@ -224,6 +227,9 @@ def multitask_qlearning_offline_dataset(task_to_path, task_to_id, observation_ty
     for task, path in tqdm(task_to_path.items()):
         data = h5py.File(os.path.join(BASE_PATH, path), 'r')
         data_q_learning = qlearning_offline_dataset(data, task, observation_type=observation_type)
+
+        # set last observation to be terminal
+        data_q_learning['terminals'][-1] = True
 
         if observation_type == "image_joints":
             # Add task id to the end of the vector observation
@@ -269,6 +275,7 @@ def multitask_qlearning_offline_dataset(task_to_path, task_to_id, observation_ty
                 raise NotImplementedError
 
     assert total_items == task_data_dict['actions'].shape[0], "total items should be the same as the number of actions"
+    assert num_traj_per_task * len(task_to_path) == task_data_dict['terminals'].sum(), "total number of trajectories should be the same as the number of terminals"
 
     return task_data_dict
 
