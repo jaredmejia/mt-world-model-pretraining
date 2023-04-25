@@ -123,7 +123,7 @@ def prep_wmodel(ckpt_dir, device):
     return cond_wmodel, dreamer_cfg
 
 
-@hydra.main(version_base=None, config_path=".", config_name="offline_iql_rssm_config")
+@hydra.main(version_base=None, config_path=".", config_name="multitask_iql_rssm")
 def main(cfg: "DictConfig"):  # noqa: F821
 
     device = (
@@ -139,7 +139,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
         logger_type=cfg.logger,
         logger_name="iql_rssm_logging",
         experiment_name=exp_name,
-        wandb_kwargs={"mode": cfg.mode, "entity": cfg.entity, "project": "offline_iql_rssm"},
+        wandb_kwargs={"mode": cfg.mode, "entity": cfg.entity, "project": f"{cfg.env_task}offline_iql_rssm"},
     )
 
     torch.manual_seed(cfg.seed)
@@ -151,6 +151,7 @@ def main(cfg: "DictConfig"):  # noqa: F821
         cfg.image_size,
         from_pixels=cfg.from_pixels,
         train_type='iql',
+        multitask= cfg.env_task == "multitask",
     )
 
     def env_factory(num_workers):
@@ -221,18 +222,27 @@ def main(cfg: "DictConfig"):  # noqa: F821
     cond_wmodel, dreamer_cfg = prep_wmodel(wmodel_ckpt_path, device)
 
     # Eval items
-    fill_dreamer_hidden_keys = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
-            shape=torch.Size([1, dreamer_cfg.state_dim]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
-            shape=torch.Size([1, dreamer_cfg.rssm_hidden_dim]), dtype=torch.float32)}, default_value=0, random=False)
-    eval_env = get_eval_env(cfg.env_name, cfg.from_pixels, cfg.image_size)
+    if cfg.env_task != "multitask":
+        fill_dreamer_hidden_keys = TensorDictPrimer(primers={'state': UnboundedContinuousTensorSpec(
+                shape=torch.Size([1, dreamer_cfg.state_dim]), dtype=torch.float32), 'belief': UnboundedContinuousTensorSpec(
+                shape=torch.Size([1, dreamer_cfg.rssm_hidden_dim]), dtype=torch.float32)}, default_value=0, random=False)
+        eval_env = get_eval_env(cfg.env_name, cfg.from_pixels, cfg.image_size)
+    
+    else:
+        print("Skipping evaluations for multitask training")
 
     # Main loop
     target_net_updater.init_()
 
     loss = None
 
-    ckpt_steps = [25000, 50000, 100000, 300000, 400000, 500000]
-    save_path = f'ckpts/{cfg.env_name}-iql-rssm-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
+    ckpt_steps = [10000, 50000, 100000, 200000, 250000, 300000]
+    save_path = os.path.join(
+        'ckpts', 
+        f'{cfg.env_task}-iql-rssm', 
+        f'{cfg.exp_name}'
+        f'{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}',
+    )
 
     for i in tqdm.tqdm(range(1, cfg.max_steps + 1),
                        smoothing=0.1):
@@ -274,32 +284,31 @@ def main(cfg: "DictConfig"):  # noqa: F821
         for key, value in train_log.items():
             logger.log_scalar(key, value, step=i)
 
-        if i % cfg.eval_interval == 0:
-
-            # TODO: replace rollout to include world model encoding
-            # we may have to only change the policy that is being used by wrapping it with the world model
-            with set_exploration_mode("mean"), torch.no_grad():
-                # evaluating in sequence for now
-                rollout_td_list = []
-                for _ in range(cfg.env_per_collector):
-                    rollout_td = iql_rssm_rollout(eval_env, model[0], cond_wmodel, cfg.max_frames_per_traj, device, fill_dreamer_hidden_keys)
-                    rollout_td_list.append(rollout_td)
-                
-                # log reward
-                eval_reward = sum([rollout_td['reward'].sum().item() for rollout_td in rollout_td_list]) / cfg.env_per_collector
-                logger.log_scalar("test_reward", eval_reward, step=i)
-
-                # log q-value estimates
-                q_value_avg, q_value_max = get_q_val_estimate(sampled_tensordict, loss_module, device)
-                logger.log_scalar("q_value_avg", q_value_avg, step=i)
-                logger.log_scalar("q_value_max", q_value_max, step=i)
-
-                # log value estimates
-                value_avg, value_max = get_value_estimate(sampled_tensordict, loss_module, device)
-                logger.log_scalar("value_avg", value_avg, step=i)
-                logger.log_scalar("value_max", value_max, step=i)
+        if i % cfg.eval_interval == 0 :
+            
+            if cfg.env_task != "multitask":
+                with set_exploration_mode("mean"), torch.no_grad():
+                    # evaluating in sequence for now
+                    rollout_td_list = []
+                    for _ in range(cfg.env_per_collector):
+                        rollout_td = iql_rssm_rollout(eval_env, model[0], cond_wmodel, cfg.max_frames_per_traj, device, fill_dreamer_hidden_keys)
+                        rollout_td_list.append(rollout_td)
+                    
+                    # log reward
+                    eval_reward = sum([rollout_td['reward'].sum().item() for rollout_td in rollout_td_list]) / cfg.env_per_collector
+                    logger.log_scalar("test_reward", eval_reward, step=i)
         
-        if i in ckpt_steps:
+            # log q-value estimates
+            q_value_avg, q_value_max = get_q_val_estimate(sampled_tensordict, loss_module, device)
+            logger.log_scalar("q_value_avg", q_value_avg, step=i)
+            logger.log_scalar("q_value_max", q_value_max, step=i)
+
+            # log value estimates
+            value_avg, value_max = get_value_estimate(sampled_tensordict, loss_module, device)
+            logger.log_scalar("value_avg", value_avg, step=i)
+            logger.log_scalar("value_max", value_max, step=i)
+        
+        if i in ckpt_steps or i == cfg.max_steps:
             os.makedirs(save_path, exist_ok=True)
             torch.save(model[0].state_dict(), os.path.join(save_path, f'actor_{i}.pth'))
             torch.save(model[1].state_dict(), os.path.join(save_path, f'qvalue_{i}.pth'))
