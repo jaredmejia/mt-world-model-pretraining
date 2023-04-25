@@ -1,7 +1,6 @@
 import collections
 from typing import Optional, Tuple
 
-import d4rl
 import gym
 import numpy as np
 import torch
@@ -268,6 +267,7 @@ class D4RLDataset(Dataset):
                  env: gym.Env,
                  clip_to_eps: bool = True,
                  eps: float = 1e-5):
+        import d4rl
         dataset = d4rl.qlearning_dataset(env)
 
         if clip_to_eps:

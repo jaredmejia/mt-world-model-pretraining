@@ -1,6 +1,6 @@
 env_name: "door-open-v2"
 env_library: gym
-exp_name: "door-open-v2"
+exp_name: "${env_name}"
 observation_type: "image_joints"
 seed: 42
 async_collection: 1
@@ -15,8 +15,10 @@ weight_decay: 0.0
 target_update_polyak: 0.995
 multi_step: 1.0
 gamma: 0.99
-max_steps: 500000
-eval_interval: 1 # 1000
+max_steps: 110000
+eval_interval: 1000
+save_interval: 25000
+save_path: "/home/mohan/work/research/bdreamm/saved_models/meta_world_checkpoints/${env_name}"
 actor_dropout: 0.1
 critic_dropout: 0.0
 value_dropout: 0.0
@@ -31,7 +33,7 @@ collector_devices: [cpu]
 env_per_collector: 10
 frames_per_batch: 1000 # 5*200
 max_frames_per_traj: 280
-num_workers: 1
+num_workers: 4
 
 image_size: 64
 
@@ -52,3 +54,12 @@ logger: wandb
 mode: online
 entity: neuropioneers
 
+
+envs:
+  a: "door-open-v2"
+  b: "drawer-close-v2"
+  c: "drawer-open-v2"
+  d: "button-press-topdown-v2"
+  e: "window-open-v2"
+  f: "window-close-v2"
+  g: "reach-v2"

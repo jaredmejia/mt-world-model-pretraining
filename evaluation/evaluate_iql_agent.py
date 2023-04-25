@@ -11,6 +11,8 @@ import pickle
 import torch
 from tqdm import tqdm
 
+from torchrl.envs import EnvCreator, ParallelEnv    
+
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.append(os.path.join(parent_dir, 'component_tests', 'iql'))
@@ -50,13 +52,16 @@ def eval_metaworld(env_names, eval_tasks, policy, max_steps=280, metaworld_trans
     for env_name in env_names:
         print(f'evaluating {env_name}...')
         rollouts[env_name] = []
-        for env_task in tqdm(eval_tasks[env_name]):
-            env = eval_metaworld_env_maker(env_name, env_task, env_transforms=metaworld_transforms)
+        for env_task in tqdm(eval_tasks[env_name][:1]):
+            env = ParallelEnv(
+                create_env_fn=EnvCreator(lambda: eval_metaworld_env_maker(metaworld.MT10(), env_name, env_task, env_transforms=metaworld_transforms.clone())),
+                num_workers=1
+            )
 
             with torch.no_grad():
                 rollout_td = env.rollout(max_steps=max_steps, policy=policy, auto_cast_to_device=True).clone()
             
-            rollouts[env_name].append(rollout_td.cpu())
+            rollouts[env_name].append(rollout_td.squeeze(0).cpu())
             env.close()
 
         rollouts[env_name] = torch.cat(rollouts[env_name], dim=0)
@@ -97,7 +102,7 @@ def main():
     parser.add_argument('--actor_ckpt_path', type=str, required=True)
     parser.add_argument('--multitask', type=bool, default=False)
     parser.add_argument('--save_dir', type=str, required=True)
-    parser.add_argument('--save_video', type=bool, default=False)
+    parser.add_argument('--save_video', type=bool, default=True)
     args = parser.parse_args()
 
     cfg = OmegaConf.load(args.config_path)
@@ -112,7 +117,7 @@ def main():
     )
 
     sample_env = env_maker(cfg.env_name, cfg.image_size, env_transforms=sample_env_transforms)
-    num_actions = sample_env.action_spaces.shape[-1]
+    num_actions = sample_env.action_spec.shape[-1]
     
     if cfg.observation_type == "image_joints":
         assert cfg.from_pixels, "observation_type 'image_joints' requires from_pixels is True"
@@ -121,10 +126,11 @@ def main():
         in_keys = ["observation"]
 
     # load actor
-    actor = load_actor(args.actor_ckpt_path, sample_env, num_actions, in_keys, device)
+    actor = load_actor(cfg, args.actor_ckpt_path, sample_env, num_actions, in_keys, device)
+    # actor_fn = lambda td: actor(td) if len(td.shape) > 0 else actor(td.unsqueeze(0))
 
     # get eval env names and tasks
-    mt10, eval_env_names, eval_tasks = get_eval_tasks(args.multitask)
+    mt10, eval_env_names, eval_tasks = get_eval_tasks(cfg, args.multitask)
 
     eval_transforms = get_env_transforms(
         'metaworld',

@@ -13,11 +13,13 @@ def env_maker(env_name, frame_skip=1, from_pixels=False, image_size=64, env_tran
     
     else:
         import metaworld
+        import random
 
         mt10 = metaworld.MT10()
 
         custom_env = mt10.train_classes[env_name]()
-        task = [task for task in mt10.train_tasks if task.env_name == env_name][0]
+        task = [task for task in mt10.train_tasks if task.env_name == env_name][:10]
+        task = random.choice(task)
         custom_env.set_task(task)
 
         original_render = custom_env.render
