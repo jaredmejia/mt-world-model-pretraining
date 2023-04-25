@@ -80,7 +80,7 @@ config_fields = [
 ]
 Config = dataclasses.make_dataclass(cls_name="Config", fields=config_fields)
 cs = ConfigStore.instance()
-cs.store(name="offline_config", node=Config)
+cs.store(name="multitask_offline_config", node=Config)
 
 
 def retrieve_stats_from_state_dict(obs_norm_state_dict):
@@ -88,16 +88,6 @@ def retrieve_stats_from_state_dict(obs_norm_state_dict):
         "loc": obs_norm_state_dict["loc"],
         "scale": obs_norm_state_dict["scale"],
     }
-
-def create_custom_env(env_name, render_imgs, image_size=64):
-    import gym
-    import d4rl
-    from torchrl.envs.libs.gym import GymWrapper
-    
-    custom_env = gym.make(env_name, render_imgs=render_imgs)
-    custom_env = GymWrapper(custom_env, from_pixels=True)
-
-    return custom_env
 
 
 def get_env_obs_stats(cfg, custom_env):
@@ -175,28 +165,15 @@ def get_pixel_vec_world_model(cfg, proof_env, use_decoder_in_env=False, device=N
     return pixel_vec_world_model, model_based_env
 
 
-def get_dreamer_losses(world_model, actor_model, value_model, model_based_env, cfg):
-    world_model_loss = DreamerModelLoss(world_model)
-    actor_loss = DreamerActorLoss(
-        actor_model,
-        value_model,
-        model_based_env,
-        imagination_horizon=cfg.imagination_horizon,
-    )
-    value_loss = DreamerValueLoss(value_model)
-
-    return world_model_loss, actor_loss, value_loss
-
-
-def make_logger(cfg):
+def make_logger(cfg, observation_type):
     exp_name = generate_exp_name("Dreamer", cfg.exp_name)
     logger = get_logger(
         logger_type=cfg.logger,
         logger_name="./offline_dreamer_logs",
         experiment_name=exp_name,
         wandb_kwargs={
-            "project": "kitchen-world-model",
-            "group": f"{cfg.env_name}-image_joints",
+            "project": f"{cfg.env_task}-training",
+            "group": f"{observation_type}",
             "offline": cfg.offline_logging,
             'entity': 'neuropioneers'
         },
@@ -341,10 +318,10 @@ def save_wmodels(model_based_env, cond_wmodel, save_path, cfg, i):
     torch.save(cond_wmodel.state_dict(), os.path.join(save_path, f"cond_wmodel_{i}.pt"))
 
 
-@hydra.main(version_base=None, config_path=".", config_name="offline_config")
+@hydra.main(version_base=None, config_path=".", config_name="multitask_offline_config")
 def main(cfg: "DictConfig"):  # noqa: F821
 
-    observation_type = "image_joints"
+    observation_type = "image"
 
     # set transforms
     env_transforms_args = (cfg.env_name, cfg.image_size)
@@ -384,23 +361,20 @@ def main(cfg: "DictConfig"):  # noqa: F821
             value_key="state_value",
             proof_environment=proof_env
         )
-
-        # get dreamer losses
-        world_model_loss, actor_loss, value_loss = get_dreamer_losses(
-            world_model, actor_model, value_model, model_based_env, cfg
-        )
+        world_model_loss = DreamerModelLoss(world_model)
 
     # get logger
-    logger = make_logger(cfg)
+    logger = make_logger(cfg, observation_type=observation_type)
 
     # load offline data into sub trajectory replay buffer
     replay_buffer = SubTrajectoryReplay(
-        'kitchen-complete-v0', 
+        cfg.env_name, 
         observation_type=observation_type, 
         batch_size=cfg.batch_size,
         batch_length=cfg.batch_length,
         base_transform=base_env_transforms,
         sample_transform=buffer_sample_transforms,
+        multitask= cfg.env_task == 'multitask',
     )
 
     # get optimizers
@@ -409,10 +383,10 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # create gradscalers
     scaler1 = GradScaler()
 
-    max_steps_train = 1000
-    ckpt_save_interval = 60
-    ckpt_save_min_steps = 600
-    save_path = f'{cfg.env_name}-offline-dreamer-{datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}'
+    max_steps_train = 2000
+    ckpt_save_interval = 100
+    ckpt_save_min_steps = 1400
+    save_path = os.path.join('ckpts', f'{cfg.env_task}-offline-dreamer', f'{cfg.exp_name}')
 
     for i in tqdm.tqdm(range(1, max_steps_train + 1),
                         smoothing=0.1):

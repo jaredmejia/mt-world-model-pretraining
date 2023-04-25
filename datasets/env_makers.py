@@ -1,5 +1,5 @@
 import torch
-from torchrl.data import BinaryDiscreteTensorSpec
+from torchrl.data import BinaryDiscreteTensorSpec, BoundedTensorSpec
 from torchrl.envs import TransformedEnv
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.envs.gym_like import default_info_dict_reader
@@ -27,6 +27,13 @@ def env_maker(env_name, frame_skip=1, from_pixels=False, image_size=64, env_tran
             
         custom_env.render = render.__get__(custom_env, type(custom_env))
         custom_env = GymWrapper(custom_env, frame_skip=frame_skip, from_pixels=from_pixels)
+        custom_env.action_spec = BoundedTensorSpec(
+                    minimum=custom_env.action_spec.space.minimum.to(torch.float32),
+                    maximum=custom_env.action_spec.space.maximum.to(torch.float32),
+                    shape=custom_env.action_spec.shape,
+                    dtype=torch.float32,
+                    device=custom_env.action_spec.device,
+        )
 
     if env_transforms is not None:
         custom_env = TransformedEnv(custom_env, env_transforms)

@@ -1,13 +1,14 @@
 import collections
+import os
 from typing import Optional, Tuple
 
 import d4rl
 import gym
+import h5py
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder
 import torch
 from tqdm import tqdm
-
-import wrappers
 
 Batch = collections.namedtuple(
     'Batch',
@@ -79,12 +80,12 @@ def total_to_instant_rewards(total_rewards, terminal_idxs, num_trajs):
     return reward_arrs
 
 
-
-def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, observation_type="default"):
+def qlearning_offline_dataset(dataset, env_name, terminate_on_end=False, observation_type="default"):
 
     if observation_type == "default":
         obs_ = []
         next_obs_ = []
+
     elif observation_type == "image_joints":
         assert "images" in dataset, "Images not found in dataset"
   
@@ -97,6 +98,12 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
             obs_dim = 9
         else: # metaworld
             obs_dim = 4
+
+    elif observation_type == "image":
+        assert "images" in dataset, "Images not found in dataset"
+  
+        images_ = []
+        next_images_ = []
 
     else:
         raise ValueError("Invalid observation type")
@@ -120,14 +127,17 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         if observation_type == "default":
             obs = dataset["observations"][i].astype(np.float32)
             new_obs = dataset["observations"][i+1].astype(np.float32)
+        
         elif observation_type == "image_joints":
             image = dataset["images"][i]
-
             next_image = dataset["images"][i+1]
 
             joint = dataset["observations"][i][:obs_dim].astype(np.float32)
             next_joint = dataset["observations"][i+1][:obs_dim].astype(np.float32)
 
+        elif observation_type == "image":
+            image = dataset["images"][i]
+            next_image = dataset["images"][i+1]
 
         action = dataset['actions'][i].astype(np.float32)
         total_reward = dataset['rewards'][i].astype(np.float32)
@@ -147,11 +157,16 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         if observation_type == "default":
             obs_.append(obs)
             next_obs_.append(new_obs)
-        else:
+
+        elif observation_type == "image_joints":
             images_.append(image)
             next_images_.append(next_image)
             joints_.append(joint)
             next_joints_.append(next_joint)
+        
+        elif observation_type == "image":
+            images_.append(image)
+            next_images_.append(next_image)
 
         action_.append(action)
         total_reward_.append(total_reward)
@@ -161,7 +176,8 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
     if observation_type == "default":
         observations = np.array(obs_)
         next_observations = np.array(next_obs_)
-    else:
+    
+    elif observation_type == "image_joints":
         images = np.array(images_)
         next_images = np.array(next_images_)
         joints = np.array(joints_)
@@ -169,6 +185,13 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
 
         observations = {"image": images, "vector": joints}
         next_observations = {"image": next_images, "vector": next_joints}
+
+    elif observation_type == "image":
+        images = np.array(images_)
+        next_images = np.array(next_images_)
+
+        observations = images
+        next_observations = next_images
 
     actions = np.array(action_)
     terminals = np.array(done_)
@@ -188,6 +211,66 @@ def qlearning_offline_dataset(env, dataset, env_name, terminate_on_end=False, ob
         "terminals": terminals,
         "next_observations": next_observations,
     }
+
+
+def multitask_qlearning_offline_dataset(task_to_path, task_to_id, observation_type="image_joints"):
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+    one_hot_encoder = OneHotEncoder(sparse_output=False)
+    one_hot_encoder.fit(np.arange(len(task_to_id)).reshape(-1, 1))
+
+    task_data = []
+    total_items = 0
+    print(f'Loading data for {len(task_to_path)} tasks')
+    for task, path in tqdm(task_to_path.items()):
+        data = h5py.File(os.path.join(BASE_PATH, path), 'r')
+        data_q_learning = qlearning_offline_dataset(data, task, observation_type=observation_type)
+
+        if observation_type == "image_joints":
+            # Add task id to the end of the vector observation
+            task_data_size = data_q_learning['observations']['vector'].shape[0]
+            one_hot_task_id = one_hot_encoder.transform(np.ones((task_data_size, 1)) * task_to_id[task])
+            vec_and_id = np.concatenate([data_q_learning['observations']['vector'], one_hot_task_id], axis=1)
+            data_q_learning['observations']['vector'] = vec_and_id
+
+            # do the same for next_observations
+            task_data_size = data_q_learning['next_observations']['vector'].shape[0]
+            one_hot_task_id = one_hot_encoder.transform(np.ones((task_data_size, 1)) * task_to_id[task])
+            vec_and_id = np.concatenate([data_q_learning['next_observations']['vector'], one_hot_task_id], axis=1)
+            data_q_learning['next_observations']['vector'] = vec_and_id
+
+        elif observation_type == "image":
+            task_data_size = data_q_learning['observations'].shape[0]
+
+        else:
+            raise NotImplementedError
+
+        total_items += task_data_size
+        task_data.append(data_q_learning)
+
+        data.close()
+
+    # convert task_data into a dictionary
+    task_data_dict = {}
+    for key in task_data[0].keys():
+        if key in ["actions", "rewards", "terminals"]:
+            task_data_dict[key] = np.concatenate([data[key] for data in task_data], axis=0)
+        
+        else:
+
+            if observation_type == "image_joints":
+                task_data_dict[key] = {}
+                task_data_dict[key]['vector'] = np.concatenate([data[key]['vector'] for data in task_data], axis=0)
+                task_data_dict[key]['image'] = np.concatenate([data[key]['image'] for data in task_data], axis=0)
+            
+            elif observation_type == "image":
+                task_data_dict[key] = np.concatenate([data[key] for data in task_data], axis=0)
+
+            else:
+                raise NotImplementedError
+
+    assert total_items == task_data_dict['actions'].shape[0], "total items should be the same as the number of actions"
+
+    return task_data_dict
 
 
 class Dataset(object):

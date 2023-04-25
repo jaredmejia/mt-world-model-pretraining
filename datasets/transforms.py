@@ -4,7 +4,7 @@ import torch
 from torchrl.envs import CenterCrop, Compose, ObservationTransform, ToTensorImage
 from torchrl.envs.transforms.transforms import _apply_to_composite
 from torchrl.data import BoundedTensorSpec, UnboundedContinuousTensorSpec
-from torchrl.envs.transforms import TensorDictPrimer, ObservationNorm, UnsqueezeTransform
+from torchrl.envs.transforms import DoubleToFloat, TensorDictPrimer, ObservationNorm, UnsqueezeTransform, Transform
 
 class KitchenFilterState(ObservationTransform):
         def __init__(
@@ -62,7 +62,7 @@ class MetaWorldFilterState(ObservationTransform):
                     device=observation_spec.device,
               )
         
-class MetaWorldConvertToFloat(ObservationTransform):
+class MetaWorldConvertToFloat(Transform):
         def __init__(
             self,
             in_keys: Optional[Sequence[str]] = None,
@@ -80,14 +80,13 @@ class MetaWorldConvertToFloat(ObservationTransform):
         def _apply_transform(self, obs: torch.Tensor):
             return obs.to(torch.float32)
 
-        @_apply_to_composite
-        def transform_observation_spec(self, observation_spec):
+        def transform_input_spec(self, input_spec):
               return BoundedTensorSpec(
-                    minimum=observation_spec.minimum.to(torch.float32),
-                    maximum=observation_spec.maximum.to(torch.float32),
-                    shape=observation_spec.shape,
+                    minimum=input_spec.minimum.to(torch.float32),
+                    maximum=input_spec.maximum.to(torch.float32),
+                    shape=input_spec.shape,
                     dtype=torch.float32,
-                    device=observation_spec.device,
+                    device=input_spec.device,
               )
         
 class SuccessUnsqueeze(UnsqueezeTransform):
@@ -128,7 +127,7 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
         env_transforms = [
             ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys),
             MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
-            MetaWorldConvertToFloat(in_keys=["action", ("next", "action")], out_keys=["action", ("next", "action")]),
+            DoubleToFloat(in_keys=["action", ("next", "action")]),
         ]
 
         if eval:

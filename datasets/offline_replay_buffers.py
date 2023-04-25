@@ -15,13 +15,10 @@ from torchrl.data.replay_buffers.storages import LazyMemmapStorage
 from torchrl.data.replay_buffers.writers import Writer
 from torchrl.envs import Compose
 
-from .dataset_utils import qlearning_offline_dataset
+from .dataset_utils import qlearning_offline_dataset, multitask_qlearning_offline_dataset
+from .metadata import METAWORLD_SUCCESS_DATA_PATHS, METAWORLD_IDS
 from .env_makers import env_maker
 
-
-METAWORLD_DATA_PATHS = {
-    "door-open-v2": "./metaworld_data/merged_data_door-open-v2_10_small_trajs.h5", # TODO: mohan
-}
 
 class OfflineExperienceReplay(TensorDictReplayBuffer):
     def __init__(
@@ -37,12 +34,16 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             base_transform: Optional["Transform"] = None,  # noqa-F821
             split_trajs: bool = False,
             use_timeout_as_done: bool = True,
+            multitask: bool = False,
     ):
         self.use_timeout_as_done = use_timeout_as_done  
         self.base_transform = base_transform
-        dataset = self._get_dataset_direct(env_name, observation_type)
 
-        dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask)
+
+        if observation_type != "image":
+            dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+        
         if "image" in observation_type:
             dataset["next", "pixels"][dataset["next", "done"].squeeze()] = 0
 
@@ -62,38 +63,49 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         )
         self.extend(dataset)
 
-    def _get_dataset_direct(self, env_name, observation_type):
+    def _get_dataset_direct(self, env_name, observation_type, multitask=False):
 
         from_pixels = "image" in observation_type
         env = env_maker(env_name, from_pixels=from_pixels, env_transforms=self.base_transform)
-        
-        if 'kitchen' in env_name:
-            raw_dataset = env.get_dataset()
-        
-        else: # otherwise metaworld
-            mw_data_path = os.path.join(os.path.dirname(__file__), METAWORLD_DATA_PATHS[env_name])
-            raw_dataset = h5py.File(mw_data_path, 'r')
 
-        dataset = qlearning_offline_dataset(env, raw_dataset, env_name, observation_type=observation_type)
+        if multitask:
+            dataset = multitask_qlearning_offline_dataset(METAWORLD_SUCCESS_DATA_PATHS, METAWORLD_IDS, observation_type=observation_type)
+            
+        else:
+            if 'kitchen' in env_name:
+                raw_dataset = env.get_dataset(METAWORLD_SUCCESS_DATA_PATHS)
+            
+            else: # otherwise metaworld single env
+                mw_data_path = os.path.join(os.path.dirname(__file__), METAWORLD_SUCCESS_DATA_PATHS[env_name])
+                raw_dataset = h5py.File(mw_data_path, 'r')
+
+            dataset = qlearning_offline_dataset(raw_dataset, env_name, observation_type=observation_type)
+
+        data_dict = {k: torch.from_numpy(item) for k, item in dataset.items() if isinstance(item, np.ndarray)}
 
         if observation_type == "image_joints":
-            data_dict = {k: torch.from_numpy(item) for k, item in dataset.items() if isinstance(item, np.ndarray)}
             data_dict['observations'] = dataset['observations']['vector']
             data_dict['next_observations'] = dataset['next_observations']['vector']
-            data_dict['pixels'] = dataset['observations']['image']
-            data_dict['next_pixels'] = dataset['next_observations']['image']
-        else:
-            data_dict = {k: torch.from_numpy(item) for k, item in dataset.items() if isinstance(item, np.ndarray)}
+
+        elif observation_type == "image":
+            data_dict['pixels'] = dataset['observations']
+            data_dict['next_pixels'] = dataset['next_observations']
 
         dataset = make_tensordict(data_dict)
 
         # rename keys to match torchrl conventions
-        dataset.rename_key("observations", "observation")
+        if observation_type != 'image':
+            dataset.rename_key("observations", "observation")
+        
         dataset.set("next", dataset.select())
-        dataset.rename_key("next_observations", ("next", "observation"))
         dataset.rename_key("terminals", "terminal")
+        
+        if observation_type != 'image':
+            dataset.rename_key("next_observations", ("next", "observation"))
+        
         if "timeouts" in dataset.keys():
             dataset.rename_key("timeouts", "timeout")
+
         if self.use_timeout_as_done:
             dataset.set(
                 "done",
@@ -102,34 +114,38 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             )
         else:
             dataset.set("done", dataset.get("terminal"))
+        
         dataset.rename_key("rewards", "reward")
         dataset.rename_key("actions", "action")
         dataset["action"] = dataset["action"].to(torch.float32)
 
-        if observation_type == "image_joints":
+        if 'image' in observation_type:
             dataset.rename_key("next_pixels", ("next", "pixels"))
         
         # checking dtypes
         for key, spec in env.observation_spec.items(True, True):
-            if key != "pixels":
+            if key != "pixels" and observation_type != 'image':
                 dataset[key] = dataset[key].to(spec.dtype)
                 dataset["next", key] = dataset["next", key].to(spec.dtype)
+
         for key, spec in env.input_spec.items(True, True):
             dataset[key] = dataset[key].to(spec.dtype)
+
         dataset["reward"] = dataset["reward"].to(env.reward_spec.dtype)
         dataset["done"] = dataset["done"].bool()
-
         dataset["done"] = dataset["done"].unsqueeze(-1)
-        # dataset.rename_key("next_observations", "next/observation")
         dataset["reward"] = dataset["reward"].unsqueeze(-1)
+
         dataset["next"].update(
             dataset.select("reward", "done", "terminal", "timeout", strict=False)
         )
         dataset = (
             dataset.clone()
         )  # make sure that all tensors have a different data_ptr
+
         self._shift_reward_done(dataset)
         self.specs = env.specs.clone()
+
         return dataset
 
     def _shift_reward_done(self, dataset):
@@ -151,13 +167,16 @@ class SubTrajectoryReplay(OfflineExperienceReplay):
             base_transform: Optional[Callable] = None,
             sample_transform: Optional[Callable] = None,
             split_trajs: bool = False,
-            use_timeout_as_done: bool = True
+            use_timeout_as_done: bool = True,
+            multitask: bool = False,
     ):
         self.use_timeout_as_done = use_timeout_as_done  
         self.base_transform = base_transform
-        dataset = self._get_dataset_direct(env_name, observation_type)
+        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask)
 
-        dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+        if observation_type != "image":
+            dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
+        
         if "image" in observation_type:
             dataset["next", "pixels"][dataset["next", "done"].squeeze()] = 0
 
