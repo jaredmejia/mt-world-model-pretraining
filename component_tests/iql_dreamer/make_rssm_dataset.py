@@ -110,6 +110,7 @@ def main():
         "from_pixels": cfg.from_pixels,
         "state_dim": cfg.state_dim,
         "hidden_dim": cfg.rssm_hidden_dim,
+        "multitask": cfg.env_task == "multitask",
     }
     base_env_transforms = get_env_transforms(
         *env_transforms_args, batch_size=(), train_type=None, **env_transforms_kwargs

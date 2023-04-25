@@ -37,11 +37,13 @@ class KitchenFilterState(ObservationTransform):
 class MetaWorldFilterState(ObservationTransform):
         def __init__(
             self,
+            multitask: bool,
             in_keys: Optional[Sequence[str]] = None,
             out_keys: Optional[Sequence[str]] = None,
             in_keys_inv: Optional[Sequence[str]] = None,
             out_keys_inv: Optional[Sequence[str]] = None,
-        ):
+        ):  
+            self.obs_length = 14 if multitask else 4
             if in_keys is None:
                 in_keys = ["observation"]
             if out_keys is None:
@@ -50,14 +52,14 @@ class MetaWorldFilterState(ObservationTransform):
             super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
 
         def _apply_transform(self, obs: torch.Tensor):
-            return obs[..., :4].to(torch.float32)
+            return obs[..., :self.obs_length].to(torch.float32)
 
         @_apply_to_composite
         def transform_observation_spec(self, observation_spec):
               return BoundedTensorSpec(
                     minimum=-1.0,
                     maximum=1.0,
-                    shape=torch.zeros(4).shape,
+                    shape=torch.zeros(self.obs_length).shape,
                     dtype=torch.float32,
                     device=observation_spec.device,
               )
@@ -106,7 +108,7 @@ def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
     return default_hidden_transform
 
 
-def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql', batch_size=None, state_dim=None, hidden_dim=None, obs_stats=None, eval=False):
+def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql', batch_size=None, state_dim=None, hidden_dim=None, obs_stats=None, eval=False, multitask=False):
     
     state_keys = ["observation", ("next", "observation")]
     if from_pixels:
@@ -126,7 +128,7 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
     else: # metaworld
         env_transforms = [
             ToTensorImage(in_keys=pixel_keys, out_keys=pixel_keys), CenterCrop(image_size, in_keys=pixel_keys, out_keys=pixel_keys),
-            MetaWorldFilterState(in_keys=state_keys, out_keys=state_keys),
+            MetaWorldFilterState(multitask=multitask, in_keys=state_keys, out_keys=state_keys),
             DoubleToFloat(in_keys=["action", ("next", "action")]),
         ]
 
