@@ -1,7 +1,7 @@
 METAWORLD_SUCCESS_DATA_PATHS = {
     "button-press-topdown-v2": "metaworld_data/success_data/mini/button-press-topdown-v2_merged.h5",
     "door-open-v2": "metaworld_data/success_data/mini/door-open-v2_merged.h5",
-    "drawer-close-v2": "metaworld_data/success_data/mini/drawer-close-v2_merged.h5",
+    # "drawer-close-v2": "metaworld_data/success_data/mini/drawer-close-v2_merged.h5",
     "drawer-open-v2": "metaworld_data/success_data/mini/drawer-open-v2_merged.h5",
     "reach-v2": "metaworld_data/success_data/mini/reach-v2_merged.h5",
     "window-close-v2": "metaworld_data/success_data/mini/window-close-v2_merged.h5",

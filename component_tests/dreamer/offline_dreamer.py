@@ -383,10 +383,15 @@ def main(cfg: "DictConfig"):  # noqa: F821
     # create gradscalers
     scaler1 = GradScaler()
 
-    max_steps_train = 2000
-    ckpt_save_interval = 100
-    ckpt_save_min_steps = 1400
-    save_path = os.path.join('ckpts', f'{cfg.env_task}-offline-dreamer', f'{cfg.exp_name}')
+    max_steps_train = 3000
+    ckpt_save_interval = 500
+    ckpt_save_min_steps = 2000
+    save_path = os.path.join(
+        'ckpts', 
+        f'{cfg.env_task}-offline-dreamer', 
+        f'{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}',
+        f'{cfg.exp_name}'
+    )
 
     for i in tqdm.tqdm(range(1, max_steps_train + 1),
                         smoothing=0.1):

@@ -86,6 +86,8 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         if observation_type == "image_joints":
             data_dict['observations'] = dataset['observations']['vector']
             data_dict['next_observations'] = dataset['next_observations']['vector']
+            data_dict['pixels'] = dataset['observations']['image']
+            data_dict['next_pixels'] = dataset['next_observations']['image']
 
         elif observation_type == "image":
             data_dict['pixels'] = dataset['observations']

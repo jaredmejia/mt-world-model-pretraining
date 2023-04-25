@@ -55,9 +55,8 @@ from torchrl.trainers.trainers import Recorder, RewardNormalizer
 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from datasets import SubTrajectoryReplay
 
-from offline_dreamer import create_custom_env, offline_kitchen_transforms
+from datasets import SubTrajectoryReplay, env_maker, get_env_transforms
 from dreamer_utils import conditional_model_rollout, recover_pixels
 
 
@@ -125,8 +124,25 @@ def main():
     cfg_path = os.path.join(args.ckpt_dir, "config.yaml")
     cfg = OmegaConf.load(cfg_path)
 
-    # create custom env
-    custom_env = create_custom_env('kitchen-complete-v0', render_imgs=True, image_size=cfg.image_size)
+    # set transforms
+    env_transforms_args = (cfg.env_name, cfg.image_size)
+    env_transforms_kwargs = {
+        "from_pixels": cfg.from_pixels,
+        "state_dim": cfg.state_dim,
+        "hidden_dim": cfg.rssm_hidden_dim,
+    }
+    base_env_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(), train_type=None, **env_transforms_kwargs
+    )
+    buffer_sample_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(cfg.batch_size, cfg.batch_length), train_type='dreamer', **env_transforms_kwargs
+    )
+    proof_env_transforms = get_env_transforms(
+        *env_transforms_args, batch_size=(), train_type='dreamer', **env_transforms_kwargs
+    )
+
+    # get proof env
+    proof_env = env_maker(env_name=cfg.env_name, from_pixels=cfg.from_pixels, image_size=cfg.image_size, env_transforms=proof_env_transforms.clone())
 
     # get device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -139,29 +155,21 @@ def main():
         use_decoder_in_env=True,
         action_key="action",
         value_key="state_value",
-        proof_environment=transformed_env_constructor(
-            cfg, stats={"loc": 0.0, "scale": 1.0}, custom_env=custom_env
-        )(),
+        proof_environment=proof_env,
     )
 
     # load world models
     model_based_env, cond_wmodel = load_wmodels(model_based_env, world_model, args.ckpt_dir, args.ckpt_num)
 
-    # get kitchen_transforms
-    kitchen_transforms = offline_kitchen_transforms(
-        (cfg.batch_size, cfg.batch_length), 
-        cfg.image_size, 
-        cfg.state_dim, 
-        cfg.rssm_hidden_dim
-    )
-
     # load offline data into sub trajectory replay buffer
     replay_buffer = SubTrajectoryReplay(
-        'kitchen-complete-v0', 
+        cfg.env_name, 
         observation_type='image_joints', 
         batch_size=cfg.batch_size,
         batch_length=cfg.batch_length,
-        transform=kitchen_transforms
+        base_transform=base_env_transforms,
+        sample_transform=buffer_sample_transforms,
+        multitask= cfg.env_task == 'multitask',
     )
     sample_td = replay_buffer.sample().to(device)
 
