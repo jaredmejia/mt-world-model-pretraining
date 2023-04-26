@@ -151,6 +151,7 @@ def eval_with_rssm_metaworld(
     device=None,
     max_success_vids=8,
     max_failure_vids=8,
+    multitask=True
 ):
     eval_pixels = {}
     eval_stats = {}
@@ -162,15 +163,18 @@ def eval_with_rssm_metaworld(
         rewards = []
         successes = 0
 
+        env_transforms = eval_transforms.clone()
+        if multitask:
+            env_transforms.append(AppendEnvID(env_name))
+
         print(f"evaluating {env_name}...")
         for env_task in tqdm(eval_env_tasks[env_name]):
 
             # create eval env
             eval_env = eval_metaworld_env_maker(
-                mt10, env_name, env_task, env_transforms=eval_transforms.clone()
+                mt10, env_name, env_task, env_transforms=env_transforms.clone()
             )
             eval_env.to(device)
-            eval_env.append_transform(AppendEnvID(env_name, device=device))
 
             # rollout
             rollout_td = conditional_iql_rssm_rollout(
