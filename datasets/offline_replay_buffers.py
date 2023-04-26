@@ -35,11 +35,12 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
             split_trajs: bool = False,
             use_timeout_as_done: bool = True,
             multitask: bool = False,
+            sparse_reward: bool = False
     ):
         self.use_timeout_as_done = use_timeout_as_done  
         self.base_transform = base_transform
 
-        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask)
+        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask, sparse_reward=sparse_reward)
 
         if observation_type != "image":
             dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
@@ -63,7 +64,7 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         )
         self.extend(dataset)
 
-    def _get_dataset_direct(self, env_name, observation_type, multitask=False):
+    def _get_dataset_direct(self, env_name, observation_type, multitask=False, sparse_reward=False):
 
         from_pixels = "image" in observation_type
         env = env_maker(env_name, from_pixels=from_pixels, env_transforms=self.base_transform)
@@ -148,6 +149,16 @@ class OfflineExperienceReplay(TensorDictReplayBuffer):
         self._shift_reward_done(dataset)
         self.specs = env.specs.clone()
 
+        if sparse_reward:
+            dataset["reward"] = dataset["done"].clone()
+            dataset["next", "reward"] = dataset["next", "done"].clone()
+            
+            # ensure last step marked as success
+            dataset["reward"][-1] = True
+
+            dataset["reward"] = dataset["reward"].to(env.reward_spec.dtype)
+            dataset["next", "reward"] = dataset["next", "reward"].to(env.reward_spec.dtype)
+
         return dataset
 
     def _shift_reward_done(self, dataset):
@@ -171,10 +182,11 @@ class SubTrajectoryReplay(OfflineExperienceReplay):
             split_trajs: bool = False,
             use_timeout_as_done: bool = True,
             multitask: bool = False,
+            sparse_reward: bool = False,
     ):
         self.use_timeout_as_done = use_timeout_as_done  
         self.base_transform = base_transform
-        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask)
+        dataset = self._get_dataset_direct(env_name, observation_type, multitask=multitask, sparse_reward=sparse_reward)
 
         if observation_type != "image":
             dataset["next", "observation"][dataset["next", "done"].squeeze()] = 0
