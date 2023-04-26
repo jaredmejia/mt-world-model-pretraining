@@ -13,6 +13,7 @@ import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from datasets import OfflineExperienceReplay, RSSMStateReplayBuffer, env_maker, get_env_transforms
+from datasets.transforms import AppendEnvID
 from modules import PixelVecNet
 
 def get_bc_actor(cfg, test_env, in_keys):
@@ -54,7 +55,7 @@ def get_bc_actor(cfg, test_env, in_keys):
     return actor_net
 
 
-@hydra.main(version_base=None, config_path=".", config_name="multitask_bc_config")
+@hydra.main(version_base=None, config_path=".", config_name="multitask_bc")
 def main(cfg: "DictConfig"):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -76,6 +77,7 @@ def main(cfg: "DictConfig"):
         cfg.image_size,
         from_pixels=cfg.from_pixels,
         train_type='iql',
+        multitask=cfg.env_task == "multitask",
     )
 
     def env_factory(num_workers):
@@ -109,8 +111,9 @@ def main(cfg: "DictConfig"):
 
     # Make Replay Buffer
     print("Creating Replay Buffer...")
-    if cfg.env_task != "multitask": 
-        replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, base_transform=env_transforms)
+    use_rssm = cfg.get("data_snaphsot_path", None) is not None
+    if not use_rssm: 
+        replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, base_transform=env_transforms, multitask=cfg.env_task == "multitask")
 
     else: # assume rssm states
         replay_buffer = RSSMStateReplayBuffer(cfg.data_snapshot_path, batch_size=cfg.batch_size)
