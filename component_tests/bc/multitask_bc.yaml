@@ -1,0 +1,24 @@
+env_name: "door-open-v2"
+env_task: "multitask"
+exp_name: "multitask-metaworld"
+observation_type: "image_joints"
+seed: 42
+
+agent_type: "bc"
+
+# Logging
+logger: wandb
+mode: online
+entity: neuropioneers
+
+image_size: 64
+from_pixels: 1
+
+# training
+max_steps: 150000
+batch_size: 256
+
+actor_dropout: 0.1
+
+save_path: "./ckpts"
+ckpt_interval: 50000
