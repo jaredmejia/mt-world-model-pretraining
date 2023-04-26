@@ -139,7 +139,7 @@ def conditional_iql_rssm_rollout(
     return rollout_td
 
 
-def eval_iql_rssm_metaworld(
+def eval_with_rssm_metaworld(
     mt10,
     eval_env_names,
     eval_env_tasks,
@@ -203,15 +203,17 @@ def eval_iql_rssm_metaworld(
     return eval_pixels, eval_stats
 
 
-def eval_iql_metaworld(
+def eval_metaworld(
     mt10,
     env_names,
     eval_tasks,
     policy,
     max_steps=500,
     metaworld_transforms=None,
+    multitask=False,
     max_success_vids=8,
     max_failure_vids=8,
+    device=None,
 ):
     eval_pixels = {}
     eval_stats = {}
@@ -220,6 +222,11 @@ def eval_iql_metaworld(
         eval_stats[env_name] = {}
         rewards = []
         successes = 0
+
+        env_transforms = metaworld_transforms.clone()
+
+        if multitask:
+            env_transforms.append(AppendEnvID(env_name))
 
         print(f"evaluating {env_name}...")
         for env_task in tqdm(eval_tasks[env_name]):
@@ -230,7 +237,7 @@ def eval_iql_metaworld(
                         mt10,
                         env_name,
                         env_task,
-                        env_transforms=metaworld_transforms.clone(),
+                        env_transforms=env_transforms.clone(),
                     )
                 ),
                 num_workers=1,
@@ -366,7 +373,7 @@ def main():
         )
 
         # evaluate iql-rssm
-        eval_pixels, eval_stats = eval_iql_rssm_metaworld(
+        eval_pixels, eval_stats = eval_with_rssm_metaworld(
             mt10,
             eval_env_names,
             eval_tasks,
@@ -380,12 +387,13 @@ def main():
 
     else:
         # evaluate iql
-        eval_pixels, eval_stats = eval_iql_metaworld(
+        eval_pixels, eval_stats = eval_metaworld(
             mt10,
             eval_env_names,
             eval_tasks,
             actor,
             max_steps=500,
+            multitask=cfg.env_task == "multitask",
             metaworld_transforms=eval_transforms,
         )
 
