@@ -55,7 +55,7 @@ def get_bc_actor(cfg, test_env, in_keys):
     return actor_net
 
 
-@hydra.main(version_base=None, config_path=".", config_name="multitask_bc")
+@hydra.main(version_base=None, config_path=".", config_name="multitask_bc-rssm-sparse")
 def main(cfg: "DictConfig"):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -111,7 +111,7 @@ def main(cfg: "DictConfig"):
 
     # Make Replay Buffer
     print("Creating Replay Buffer...")
-    use_rssm = cfg.get("data_snaphsot_path", None) is not None
+    use_rssm = cfg.get("data_snapshot_path", None) is not None
     if not use_rssm: 
         replay_buffer = OfflineExperienceReplay(cfg.env_name, observation_type=cfg.observation_type, base_transform=env_transforms, multitask=cfg.env_task == "multitask")
 
