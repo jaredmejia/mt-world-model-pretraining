@@ -1,10 +1,15 @@
 from typing import Optional, Sequence
 
+import numpy as np
 import torch
 from torchrl.envs import CenterCrop, Compose, ObservationTransform, ToTensorImage
 from torchrl.envs.transforms.transforms import _apply_to_composite
 from torchrl.data import BoundedTensorSpec, UnboundedContinuousTensorSpec
 from torchrl.envs.transforms import DoubleToFloat, TensorDictPrimer, ObservationNorm, UnsqueezeTransform, Transform
+from sklearn.preprocessing import OneHotEncoder
+
+from .metadata import METAWORLD_IDS
+
 
 class KitchenFilterState(ObservationTransform):
         def __init__(
@@ -99,6 +104,34 @@ class SuccessUnsqueeze(UnsqueezeTransform):
         if len(observation.shape) == 0:
             observation = observation.unsqueeze(self.unsqueeze_dim).to(torch.bool)
         return observation
+    
+
+class AppendEnvID(ObservationTransform):
+        def __init__(
+            self,
+            env_name: bool,
+            in_keys: Optional[Sequence[str]] = None,
+            out_keys: Optional[Sequence[str]] = None,
+            in_keys_inv: Optional[Sequence[str]] = None,
+            out_keys_inv: Optional[Sequence[str]] = None,
+            device: Optional[torch.device] = None,
+        ):  
+            if in_keys is None:
+                in_keys = ["observation"]
+            if out_keys is None:
+                out_keys = ["observation"]
+
+            one_hot_encoder = OneHotEncoder(sparse_output=False)
+            one_hot_encoder.fit(np.arange(len(METAWORLD_IDS)).reshape(-1, 1))
+
+            self.num_tasks = len(METAWORLD_IDS)
+            self.one_hot_task_id = torch.from_numpy(one_hot_encoder.transform(np.ones((1, 1)) * METAWORLD_IDS[env_name])).squeeze(0).to(device)
+
+            super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
+
+        def _apply_transform(self, obs: torch.Tensor):
+            obs = torch.cat([obs[..., :-self.num_tasks], self.one_hot_task_id.clone()], dim=-1)
+            return obs.to(torch.float32)
         
 
 def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
@@ -134,7 +167,7 @@ def get_env_transforms(env_name, image_size, from_pixels=True, train_type='iql',
 
         if eval:
              env_transforms.append(SuccessUnsqueeze(unsqueeze_dim=-1, in_keys=["success"], out_keys=["success"]))
-
+             
     if train_type == 'dreamer':
         if isinstance(batch_size, int):
             batch_size = (batch_size,)

@@ -2,7 +2,7 @@ env_name: door-open-v2
 env_task: multitask
 env_library: gym
 exp_name: "multitask_cond"
-observation_type: "image_joints"
+observation_type: "latent+vec+id"
 seed: 42
 async_collection: 1
 record_video: 0
