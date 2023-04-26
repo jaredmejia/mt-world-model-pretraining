@@ -125,13 +125,19 @@ class AppendEnvID(ObservationTransform):
             one_hot_encoder.fit(np.arange(len(METAWORLD_IDS)).reshape(-1, 1))
 
             self.num_tasks = len(METAWORLD_IDS)
-            self.one_hot_task_id = torch.from_numpy(one_hot_encoder.transform(np.ones((1, 1)) * METAWORLD_IDS[env_name])).squeeze(0).to(device)
+            self.one_hot_task_id = torch.from_numpy(one_hot_encoder.transform(np.ones((1, 1)) * METAWORLD_IDS[env_name])).squeeze(0)
+
+            if device is not None:
+                self.one_hot_task_id = self.one_hot_task_id.to(device)
 
             super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
 
         def _apply_transform(self, obs: torch.Tensor):
             obs = torch.cat([obs[..., :-self.num_tasks], self.one_hot_task_id.clone()], dim=-1)
             return obs.to(torch.float32)
+        
+        def to(self, device):
+             self.one_hot_task_id = self.one_hot_task_id.to(device)
         
 
 def fill_dreamer_hidden_keys(batch_size, state_dim, hidden_dim):
