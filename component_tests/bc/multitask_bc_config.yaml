@@ -1,0 +1,25 @@
+env_name: "door-open-v2"
+env_task: "multitask"
+exp_name: "multitask-metaworld"
+observation_type: "latent+vec+id"
+seed: 42
+
+# Logging
+logger: wandb
+mode: online
+entity: neuropioneers
+
+image_size: 64
+from_pixels: 1
+
+# training
+max_steps: 150000
+batch_size: 256
+
+actor_dropout: 0.1
+
+save_path: "./ckpts"
+ckpt_interval: 50000
+
+# rssm
+data_snapshot_path: "../iql_dreamer/encoded_data/multi_task_encoded_2/encoded_dataset_td.pt"
