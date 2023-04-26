@@ -20,13 +20,16 @@ from torchrl.envs import EnvCreator, ParallelEnv
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.append(os.path.join(parent_dir, "component_tests", "iql"))
-from iql_offline import get_actor
+from iql_offline import get_actor as get_iql_actor
 
 sys.path.append(os.path.join(parent_dir, "component_tests", "dreamer"))
 from gen_rollout import save_video
 
 sys.path.append(os.path.join(parent_dir, "component_tests", "iql_dreamer"))
 from iql_rssm_offline import prep_wmodel
+
+sys.path.append(os.path.join(parent_dir, "component_tests", "bc"))
+from bc_train import get_bc_actor
 
 
 from datasets import get_env_transforms, eval_metaworld_env_maker, env_maker
@@ -266,7 +269,12 @@ def eval_iql_metaworld(
 
 
 def load_actor(cfg, ckpt_path, sample_env, num_actions, in_keys, device):
-    actor = get_actor(cfg, sample_env, num_actions, in_keys)
+
+    if cfg.agent_type == "bc":
+        actor = get_bc_actor(cfg, sample_env, in_keys)
+    else:
+        actor = get_iql_actor(cfg, sample_env, num_actions, in_keys)
+
     actor.load_state_dict(torch.load(ckpt_path, map_location=device))
     actor.to(device)
     actor.eval()
